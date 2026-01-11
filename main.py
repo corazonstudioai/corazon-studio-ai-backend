@@ -14,10 +14,17 @@ app.add_middleware(
 @app.get("/")
 def read_root():
     return {"mensaje": "Backend Corazón Studio AI activo"}
+
+from pydantic import BaseModel
+
+class DemoVideoRequest(BaseModel):
+    prompt: str
+
 @app.post("/demo-video")
-def demo_video(prompt:str):
-    return {
-        "status": "ok",
-        "mensaje": "Video demo en proceso", 
-        "prompt_recibido":prompt
-    }
+def demo_video(data: DemoVideoRequest):
+    return {
+        "status": "ok",
+        "mensaje": "Video demo en proceso",
+        "prompt_recibido": data.prompt,
+        "tipo": "demo"
+    }
