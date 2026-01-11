@@ -16,9 +16,8 @@ app.add_middleware(
 )
 @app.get("/")
 def read_root():
-    return{"mensaje":"Backend
-           Corazón Studio AI activo"}
-
+    return{"mensaje": "Backend Corazón Studio AI activo"}
+       
            class DemoVideoRequest(BaseModel):
            prompt: str
 
