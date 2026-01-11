@@ -14,3 +14,10 @@ app.add_middleware(
 @app.get("/")
 def read_root():
     return {"mensaje": "Backend Corazón Studio AI activo"}
+@app.post("/demo-video")
+def demo_video(prompt:str):
+    return {
+        "status": "ok",
+        "mensaje": "Video demo en proceso", 
+        "prompt_recibido":prompt
+    }
