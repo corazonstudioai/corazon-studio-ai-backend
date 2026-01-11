@@ -1,31 +1,26 @@
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+import os
+from openai import OpenAI
 
 app = FastAPI()
 
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-app.add_middleware(
-    CORSMiddleware,
+class Prompt(BaseModel):
+    message: str
 
-    allow_origins=["https://corazon-studio-ai-web.onrender.com"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 @app.get("/")
 def read_root():
-    return{"mensaje": "Backend Corazón Studio AI activo"}
-       
-           class DemoVideoRequest(BaseModel):
-           prompt: str
+    return {"mensaje": "Backend Corazón Studio AI activo"}
 
-
-@app.post("/demo-video")
-def demo_video(data:
-DemoVideoRequest):
-return{
-"status": "ok",
-"mensaje": "Video demo en proceso",
-"prompt_recibido":data.prompt,"tipo":"demo",
-}
+@app.post("/chat")
+def chat(prompt: Prompt):
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": "Eres una IA con propósito, amable y clara."},
+            {"role": "user", "content": prompt.message},
+        ],
+    )
+    return {"respuesta": response.choices[0].message.content}
