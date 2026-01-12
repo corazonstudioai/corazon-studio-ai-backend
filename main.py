@@ -1,38 +1,33 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import os
-from openai import OpenAI
 
-app = FastAPI()
+app = FastAPI(title="Corazón Studio AI Backend")
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# --- CORS (PERMITE QUE GITHUB PAGES SE CONECTE) ---
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # permite cualquier origen
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-# PERFIL GLOBAL DE LA IA (SE DEFINE UNA SOLA VEZ)
-SYSTEM_PROFILE = """
-Eres Corazón Studio AI.
-Hablas con un tono cálido, humano, respetuoso y cercano.
-Te diriges al público en general.
-Tu lenguaje es claro, positivo y empático.
-Transmitís valores de amor, fe, esperanza y apoyo emocional.
-Respondes de forma profesional pero accesible.
-Nunca eres fría ni robótica.
-Tu objetivo es ayudar, acompañar y guiar con sensibilidad.
-"""
-
-class Prompt(BaseModel):
+# --- MODELO DE DATOS ---
+class ChatRequest(BaseModel):
     message: str
 
+# --- RUTA DE PRUEBA ---
 @app.get("/")
-def read_root():
+def root():
     return {"mensaje": "Backend Corazón Studio AI activo"}
 
+# --- RUTA PRINCIPAL PARA EL FRONTEND ---
 @app.post("/chat")
-def chat(prompt: Prompt):
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": SYSTEM_PROFILE},
-            {"role": "user", "content": prompt.message}
-        ]
-    )
-    return {"respuesta": response.choices[0].message.content}
+def chat(data: ChatRequest):
+    user_message = data.message
+
+    # Respuesta simple (luego aquí va la IA real)
+    return {
+        "respuesta": f"Recibí tu mensaje: '{user_message}'. Conexión exitosa 💙"
+    }
