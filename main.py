@@ -1,66 +1,92 @@
 import os
-import requests
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from openai import OpenAI
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.2")
 
-app = FastAPI(title="Corazón Studio AI Backend")
+# =========================
+# CONFIG
+# =========================
+APP_TITLE = "Corazón Studio AI Backend"
+MODEL = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+SYSTEM_PROMPT = os.getenv(
+    "ASSISTANT_PROMPT",
+    "Eres un asistente útil, amable y claro. Responde en español y en pasos cuando te lo pidan.",
+)
+
+# Mientras pruebas, deja "*". Luego lo hacemos más seguro.
+ALLOWED_ORIGINS = ["*"]
+
+
+# =========================
+# APP
+# =========================
+app = FastAPI(title=APP_TITLE)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-class ChatIn(BaseModel):
+# Lee OPENAI_API_KEY desde Render (Environment Variables)
+client = OpenAI()
+
+
+# =========================
+# MODELOS
+# =========================
+class ChatRequest(BaseModel):
     message: str
 
-class ChatOut(BaseModel):
+
+class ChatResponse(BaseModel):
     reply: str
 
+
+# =========================
+# RUTAS
+# =========================
 @app.get("/")
 def root():
     return {"mensaje": "Backend Corazón Studio AI activo"}
 
-@app.post("/chat", response_model=ChatOut)
-def chat(payload: ChatIn):
-    if not OPENAI_API_KEY:
-        raise HTTPException(status_code=500, detail="Falta OPENAI_API_KEY en Render.")
 
-    user_message = (payload.message or "").strip()
-    if not user_message:
-        raise HTTPException(status_code=400, detail="El mensaje viene vacío.")
+@app.get("/health")
+def health():
+    return {"status": "ok"}
 
-    try:
-        res = requests.post(
-            "https://api.openai.com/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {OPENAI_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": OPENAI_MODEL,
-                "messages": [
-                    {"role": "system", "content": "Eres un asistente útil y amable para Corazón Studio AI."},
-                    {"role": "user", "content": user_message},
-                ],
-            },
-            timeout=60,
+
+@app.post("/chat", response_model=ChatResponse)
+def chat(body: ChatRequest):
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise HTTPException(
+            status_code=500,
+            detail="Falta OPENAI_API_KEY en Render (Environment Variables).",
         )
 
-        if res.status_code >= 400:
-            raise HTTPException(status_code=500, detail=f"OpenAI error: {res.text}")
+    user_text = (body.message or "").strip()
+    if not user_text:
+        raise HTTPException(status_code=400, detail="El mensaje está vacío.")
 
-        data = res.json()
-        reply = data["choices"][0]["message"]["content"]
-        return {"reply": reply}
+    try:
+        response = client.responses.create(
+            model=MODEL,
+            input=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_text},
+            ],
+        )
 
-    except HTTPException:
-        raise
+        reply_text = (response.output_text or "").strip()
+        if not reply_text:
+            reply_text = "No pude generar respuesta. Intenta de nuevo."
+
+        return {"reply": reply_text}
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error inesperado: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error con OpenAI: {str(e)}")
