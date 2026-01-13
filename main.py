@@ -1,92 +1,141 @@
 import os
-from fastapi import FastAPI
+import base64
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-
-# OpenAI (oficial)
 from openai import OpenAI
 
-# -----------------------------
-# App
-# -----------------------------
-app = FastAPI(title="Corazón Studio AI Backend")
+app = FastAPI()
 
-# CORS (para GitHub Pages)
+# ✅ CORS (para GitHub Pages / Render Web)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],   # en producción puedes limitar a tu dominio de GitHub Pages
+    allow_origins=["*"],  # luego si quieres lo cerramos a tus dominios
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# -----------------------------
-# Config desde Render Environment
-# -----------------------------
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")  # puedes cambiarlo en Render
-ASSISTANT_PROFILE = os.getenv("ASSISTANT_PROFILE", "")   # opcional: tu “estilo/reglas”
+# ✅ OpenAI Client
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+# Modelos (puedes cambiarlos en Render -> Environment)
+CHAT_MODEL = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+IMAGE_MODEL = os.getenv("OPENAI_IMAGE_MODEL", "gpt-image-1")
+VIDEO_MODEL = os.getenv("OPENAI_VIDEO_MODEL", "sora-2-pro")
 
-# -----------------------------
-# Modelos
-# -----------------------------
-class ChatIn(BaseModel):
+# Prompt “Asistente Pro”
+ASSISTANT_PROMPT = (
+    os.getenv("ASSISTANT_PROMPT")
+    or os.getenv("ASSISTANT_PROFILE")
+    or os.getenv("ASSISTANT_PRO")
+    or "Eres Corazón Studio AI: amable, claro y útil."
+)
+
+class ChatRequest(BaseModel):
     message: str
-    language: str = "es"   # "es" o "en"
+    lang: str = "es"  # "es" o "en"
 
-class ChatOut(BaseModel):
-    reply: str
+class ImageRequest(BaseModel):
+    prompt: str
+    lang: str = "es"
 
-# -----------------------------
-# Rutas
-# -----------------------------
-@app.get("/")
-def root():
-    return {"mensaje": "Backend Corazón Studio AI activo ❤️", "ok": True}
+class VideoRequest(BaseModel):
+    prompt: str
+    lang: str = "es"
+
+def language_rule(lang: str) -> str:
+    # ✅ Solo 1 idioma, no ambos
+    if (lang or "").lower().startswith("en"):
+        return "Reply ONLY in English. Do not use Spanish."
+    return "Responde SOLO en español. No uses inglés."
 
 @app.get("/health")
 def health():
-    return {"ok": True}
+    return {"ok": True, "mensaje": "Backend Corazón Studio AI activo 💙"}
 
-@app.post("/chat", response_model=ChatOut)
-def chat(payload: ChatIn):
-    msg = (payload.message or "").strip()
-    lang = (payload.language or "es").strip().lower()
+@app.post("/chat")
+def chat(req: ChatRequest):
+    if not req.message.strip():
+        raise HTTPException(status_code=400, detail="Mensaje vacío")
 
-    if not msg:
-        return {"reply": "Escribe un mensaje primero." if lang == "es" else "Please type a message first."}
-
-    if client is None:
-        return {"reply": "Falta configurar OPENAI_API_KEY en Render." if lang == "es" else "OPENAI_API_KEY is missing on Render."}
-
-    # Instrucciones: idioma + estilo (ASSISTANT_PROFILE opcional)
-    if lang == "en":
-        system_text = "You are Corazón Studio AI. Reply ONLY in English."
-    else:
-        system_text = "Eres Corazón Studio AI. Responde SOLO en Español."
-
-    if ASSISTANT_PROFILE:
-        system_text += "\n\n" + ASSISTANT_PROFILE
-
-    # Usamos Responses API (recomendado actualmente) 0
-    resp = client.responses.create(
-        model=OPENAI_MODEL,
-        input=[
-            {"role": "system", "content": system_text},
-            {"role": "user", "content": msg},
-        ],
+    system = (
+        f"{ASSISTANT_PROMPT}\n\n"
+        f"{language_rule(req.lang)}\n"
+        "Sé breve, amable y directo. Si falta información, pregunta 1 cosa a la vez."
     )
 
-    # Extraer texto final (seguro)
-    reply_text = ""
     try:
-        reply_text = resp.output_text
-    except Exception:
-        reply_text = ""
+        r = client.responses.create(
+            model=CHAT_MODEL,
+            input=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": req.message},
+            ],
+        )
 
-    if not reply_text:
-        reply_text = "No pude generar respuesta. Intenta de nuevo." if lang == "es" else "I couldn't generate a reply. Please try again."
+        # output_text existe en el SDK moderno
+        reply = getattr(r, "output_text", None)
+        if not reply:
+            # fallback por si cambia el formato
+            reply = "Listo ✅ (pero no pude leer el texto de salida)."
 
-    return {"reply": reply_text}
+        return {"ok": True, "reply": reply.strip()}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error en chat: {str(e)}")
+
+@app.post("/image")
+def image(req: ImageRequest):
+    if not req.prompt.strip():
+        raise HTTPException(status_code=400, detail="Prompt vacío")
+
+    # Le pasamos instrucción de idioma dentro del prompt si quieres textos en la imagen
+    prompt = f"{req.prompt}\n\n{language_rule(req.lang)}"
+
+    try:
+        img = client.images.generate(
+            model=IMAGE_MODEL,
+            prompt=prompt,
+            size="1024x1024",
+        )
+
+        b64 = img.data[0].b64_json
+        data_url = f"data:image/png;base64,{b64}"
+        return {"ok": True, "data_url": data_url}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error en imagen: {str(e)}")
+
+@app.post("/video")
+def video(req: VideoRequest):
+    if not req.prompt.strip():
+        raise HTTPException(status_code=400, detail="Prompt vacío")
+
+    # Prompt con regla de idioma (si el video incluye texto/voz)
+    prompt = f"{req.prompt}\n\n{language_rule(req.lang)}"
+
+    try:
+        # Nota: video puede tardar, pero así lo entregamos “en una sola”
+        v = client.videos.create_and_poll(
+            model=VIDEO_MODEL,
+            prompt=prompt,
+            size="1280x720",
+            seconds=6,
+        )
+
+        # v.id sirve para descargar contenido después
+        return {"ok": True, "video_id": v.id}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error en video: {str(e)}")
+
+@app.get("/video/{video_id}")
+def video_content(video_id: str):
+    try:
+        # Descarga el mp4 desde OpenAI (sin exponer tu llave al navegador)
+        content = client.videos.content(video_id)  # bytes
+        return Response(content=content, media_type="video/mp4")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error bajando video: {str(e)}")
