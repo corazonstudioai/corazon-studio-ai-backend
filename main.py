@@ -1,198 +1,143 @@
+
 import os
-import time
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+
+# OpenAI (SDK v1)
 from openai import OpenAI
-
-# ----------------------------
-# Configuración
-# ----------------------------
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
-
-ASSISTANT_ID = (
-    os.getenv("ASSISTANT_PRO_ID")
-    or os.getenv("ASSISTANT_PRO")
-    or os.getenv("ASSISTANT_ID")
-    or ""
-).strip()
-
-client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
 app = FastAPI(title="Corazón Studio AI Backend")
 
-# ----------------------------
-# CORS (GitHub Pages)
-# ----------------------------
+# =========================
+# CORS (para GitHub Pages)
+# =========================
+# Puedes dejar "*" por ahora (rápido para pruebas).
+# Luego lo hacemos más seguro con tu URL exacta.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # luego lo hacemos más seguro
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ----------------------------
-# Modelos de datos
-# ----------------------------
-class ChatRequest(BaseModel):
+# =========================
+# ENV
+# =========================
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
+
+# Si tienes una variable tipo "ASSISTANT_PRO..." en Render,
+# aquí soportamos varios nombres por si la guardaste distinto.
+ASSISTANT_ID = (
+    os.getenv("OPENAI_ASSISTANT_ID", "").strip()
+    or os.getenv("ASSISTANT_PRO_ID", "").strip()
+    or os.getenv("ASSISTANT_PRO", "").strip()
+)
+
+# Modelo por defecto si NO usas Assistants
+DEFAULT_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip()
+
+client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+
+
+# =========================
+# Schemas
+# =========================
+class ChatIn(BaseModel):
     message: str
     language: str = "es"  # "es" o "en"
 
-class ChatResponse(BaseModel):
-    reply: str
 
-class VideoPlanRequest(BaseModel):
-    idea: str                 # texto del usuario
-    language: str = "es"      # "es" o "en"
-    duration_seconds: int = 60
-    format: str = "9:16"      # "9:16" reels, "16:9" horizontal
-    vibe: str = "profesional y cálido"  # tono general (puedes cambiarlo)
-
-class VideoPlanResponse(BaseModel):
-    plan: str  # por ahora devolvemos texto súper organizado (luego lo hacemos JSON si quieres)
-
-
-# ----------------------------
-# Rutas básicas
-# ----------------------------
+# =========================
+# Routes
+# =========================
 @app.get("/")
 def root():
     return {"mensaje": "Backend Corazón Studio AI activo ❤️", "ok": True}
 
-@app.get("/health")
-def health():
-    return {"ok": True}
 
-
-# ----------------------------
-# Prompts por idioma
-# ----------------------------
-def get_system_prompt(language: str) -> str:
-    if language.lower() == "en":
-        return (
-            "You are Corazón Studio AI. Create clear, practical outputs. "
-            "Respond ONLY in English."
-        )
-    return (
-        "Eres Corazón Studio AI. Crea resultados claros y prácticos. "
-        "Responde SOLO en español."
-    )
-
-# ----------------------------
-# Lógica IA (con o sin Assistant Pro)
-# ----------------------------
-def call_ai(user_text: str, language: str) -> str:
+@app.post("/chat")
+def chat(body: ChatIn):
     if not client:
-        raise HTTPException(status_code=500, detail="Falta OPENAI_API_KEY en Render.")
+        raise HTTPException(status_code=500, detail="Falta OPENAI_API_KEY en Render (Environment Variables).")
 
-    system_prompt = get_system_prompt(language)
-
-    # Si hay Assistant Pro, lo usamos
-    if ASSISTANT_ID:
-        thread = client.beta.threads.create()
-        client.beta.threads.messages.create(
-            thread_id=thread.id,
-            role="user",
-            content=user_text,
-        )
-        run = client.beta.threads.runs.create(
-            thread_id=thread.id,
-            assistant_id=ASSISTANT_ID,
-            additional_instructions=system_prompt,
-        )
-
-        while True:
-            run = client.beta.threads.runs.retrieve(thread_id=thread.id, run_id=run.id)
-            if run.status in ("completed", "failed", "cancelled", "expired"):
-                break
-            time.sleep(0.6)
-
-        if run.status != "completed":
-            raise HTTPException(status_code=500, detail=f"Assistant run status: {run.status}")
-
-        messages = client.beta.threads.messages.list(thread_id=thread.id)
-        for m in messages.data:
-            if m.role == "assistant":
-                parts = []
-                for block in m.content:
-                    if getattr(block, "type", None) == "text":
-                        parts.append(block.text.value)
-                text = "\n".join(parts).strip()
-                if text:
-                    return text
-
-        raise HTTPException(status_code=500, detail="No se recibió respuesta del assistant.")
-
-    # Fallback sin assistant (modelo directo)
-    resp = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_text},
-        ],
-        temperature=0.7,
-    )
-    return (resp.choices[0].message.content or "").strip()
-
-
-# ----------------------------
-# Endpoint Chat
-# ----------------------------
-@app.post("/chat", response_model=ChatResponse)
-def chat(req: ChatRequest):
-    msg = (req.message or "").strip()
+    msg = (body.message or "").strip()
     if not msg:
-        raise HTTPException(status_code=400, detail="message vacío")
+        raise HTTPException(status_code=400, detail="El mensaje viene vacío.")
 
-    reply = call_ai(msg, req.language)
-    return ChatResponse(reply=reply)
+    lang = (body.language or "es").lower().strip()
+    if lang not in ["es", "en"]:
+        lang = "es"
 
+    system_prompt_es = (
+        "Eres Corazón Studio AI. Responde con calidez y claridad. "
+        "Responde SOLO en español. Sé breve pero útil."
+    )
+    system_prompt_en = (
+        "You are Corazón Studio AI. Respond warmly and clearly. "
+        "Respond ONLY in English. Be concise but helpful."
+    )
+    system_prompt = system_prompt_en if lang == "en" else system_prompt_es
 
-# ----------------------------
-# NUEVO: Endpoint Video Plan (Opción 1)
-# ----------------------------
-@app.post("/video-plan", response_model=VideoPlanResponse)
-def video_plan(req: VideoPlanRequest):
-    idea = (req.idea or "").strip()
-    if not idea:
-        raise HTTPException(status_code=400, detail="idea vacía")
+    # =========================
+    # Opción A: Assistants (si hay ASSISTANT_ID)
+    # =========================
+    if ASSISTANT_ID:
+        try:
+            thread = client.beta.threads.create()
+            client.beta.threads.messages.create(
+                thread_id=thread.id,
+                role="user",
+                content=f"[language={lang}] {msg}",
+            )
 
-    # Seguridad básica
-    duration = req.duration_seconds
-    if duration < 10:
-        duration = 10
-    if duration > 60:
-        duration = 60
+            run = client.beta.threads.runs.create(
+                thread_id=thread.id,
+                assistant_id=ASSISTANT_ID,
+                additional_instructions=system_prompt,
+            )
 
-    prompt = f"""
-Quiero que generes un PLAN DE VIDEO listo para producir desde esta idea:
+            # Espera simple hasta que termine
+            while True:
+                run = client.beta.threads.runs.retrieve(thread_id=thread.id, run_id=run.id)
+                if run.status in ["completed", "failed", "cancelled", "expired"]:
+                    break
 
-IDEA:
-{idea}
+            if run.status != "completed":
+                raise HTTPException(status_code=500, detail=f"Assistants run terminó con estado: {run.status}")
 
-REQUISITOS:
-- Duración total: {duration} segundos
-- Formato: {req.format}
-- Estilo/Vibe: {req.vibe}
-- Devuelve TODO súper ordenado con estos encabezados exactos:
+            msgs = client.beta.threads.messages.list(thread_id=thread.id)
+            # Busca el último mensaje del assistant
+            for m in msgs.data:
+                if m.role == "assistant":
+                    text_parts = []
+                    for c in m.content:
+                        if c.type == "text" and c.text and c.text.value:
+                            text_parts.append(c.text.value)
+                    answer = "\n".join(text_parts).strip()
+                    return {"ok": True, "language": lang, "answer": answer}
 
-1) TÍTULO DEL VIDEO (corto y llamativo)
-2) OBJETIVO (1 línea)
-3) GUION NARRADO COMPLETO (para voz)
-4) ESCENAS (lista numerada). Para cada escena incluye:
-   - Duración en segundos
-   - Texto en pantalla (máximo 8 palabras)
-   - Narración de esa escena (1–2 líneas)
-   - PROMPT DE IMAGEN (descripción clara para generar imagen)
-   - Sugerencia de ambiente/música (1 frase)
-5) CTA FINAL (llamado a la acción)
-6) NOTAS (si recomiendas algo para que se vea profesional)
+            raise HTTPException(status_code=500, detail="No llegó respuesta del assistant.")
 
-Reglas:
-- No uses dos idiomas: responde SOLO en el idioma elegido.
-- Hazlo listo para Reels/ads.
-"""
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Error Assistants: {str(e)}")
 
-    text = call_ai(prompt, req.language)
-    return VideoPlanResponse(plan=text)
+    # =========================
+    # Opción B: Chat Completions (si NO hay ASSISTANT_ID)
+    # =========================
+    try:
+        resp = client.chat.completions.create(
+            model=DEFAULT_MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": msg},
+            ],
+            temperature=0.7,
+        )
+        answer = resp.choices[0].message.content.strip()
+        return {"ok": True, "language": lang, "answer": answer}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error OpenAI chat: {str(e)}")
