@@ -1,45 +1,89 @@
 import os
-import uuid
 import re
+import uuid
+import time
+import base64
 from typing import Any, Dict, Optional
 
-import httpx
-from fastapi import FastAPI, HTTPException
+import requests
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from fastapi.staticfiles import StaticFiles
 
-# Optional: fal.ai client (for Pika via Fal)
-try:
-    import fal_client
-except Exception:
-    fal_client = None
+# =========================
+# Config
+# =========================
+APP_NAME = "Corazon Studio AI Backend"
+TMP_DIR = "/tmp/files"
+os.makedirs(TMP_DIR, exist_ok=True)
 
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4.1-mini").strip()
+OPENAI_IMAGE_MODEL = os.getenv("OPENAI_IMAGE_MODEL", "gpt-image-1").strip()
 
-app = FastAPI(title="Corazón Studio AI API")
+ASSISTANT_PROMPT = os.getenv(
+    "ASSISTANT_PROMPT",
+    (
+        "Eres un asistente en español, amable, profesional y empático. "
+        "Respondes claro y directo. Si te piden pasos, los das 1x1. "
+        "No inventes información; si falta algo, dilo y ofrece alternativas."
+    ),
+).strip()
 
-# CORS (para tu frontend en onrender)
+RUNWAY_API_KEY = os.getenv("RUNWAY_API_KEY", "").strip()
+FAL_KEY = os.getenv("FAL_KEY", "").strip()
+
+# Runway (ajustable si tu cuenta usa otro dominio/version)
+RUNWAY_BASE = os.getenv("RUNWAY_BASE", "https://api.dev.runwayml.com").strip()
+RUNWAY_VERSION = os.getenv("RUNWAY_VERSION", "2024-11-06").strip()
+RUNWAY_MODEL = os.getenv("RUNWAY_TEXT2VIDEO_MODEL", "gen3a_turbo").strip()
+
+# Fal/Pika (modelo por defecto; puedes cambiarlo en variables si quieres)
+PIKA_FAL_MODEL = os.getenv("PIKA_FAL_MODEL", "fal-ai/pika/v2/turbo/text-to-video").strip()
+
+# Jobs en memoria (Render free reinicia a veces; es normal)
+JOBS: Dict[str, Dict[str, Any]] = {}
+
+# =========================
+# App
+# =========================
+app = FastAPI(title=APP_NAME)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # en producción puedes limitarlo a tu dominio
+    allow_origins=["*"],  # luego lo cerramos a tu dominio
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ----------------------------
-# Helpers
-# ----------------------------
+# Servir archivos (imágenes b64 guardadas)
+app.mount("/files", StaticFiles(directory=TMP_DIR), name="files")
 
+
+@app.get("/health")
+def health():
+    return {
+        "ok": True,
+        "app": APP_NAME,
+        "openai_key": bool(OPENAI_API_KEY),
+        "runway_key": bool(RUNWAY_API_KEY),
+        "fal_key": bool(FAL_KEY),
+    }
+
+
+# =========================
+# Helpers
+# =========================
 def _find_video_url(obj: Any) -> Optional[str]:
-    """Busca cualquier URL de video dentro de un dict/list (mp4/webm)."""
     if isinstance(obj, dict):
         for v in obj.values():
             u = _find_video_url(v)
             if u:
                 return u
     elif isinstance(obj, list):
-        for item in obj:
-            u = _find_video_url(item)
+        for it in obj:
+            u = _find_video_url(it)
             if u:
                 return u
     elif isinstance(obj, str):
@@ -48,212 +92,228 @@ def _find_video_url(obj: Any) -> Optional[str]:
     return None
 
 
-# ----------------------------
-# Chat (demo simple)
-# ----------------------------
+def _base_url(request: Request) -> str:
+    return str(request.base_url).rstrip("/")
 
-class ChatIn(BaseModel):
-    message: str
 
+# =========================
+# CHAT (OpenAI)
+# =========================
 @app.post("/chat")
-async def chat(payload: ChatIn):
-    # Aquí luego conectas OpenAI si quieres.
-    return {"reply": f"Recibí: {payload.message}"}
+def chat(payload: Dict[str, Any]):
+    msg = (payload.get("message") or "").strip()
+    if not msg:
+        raise HTTPException(status_code=400, detail="message vacío")
 
+    if not OPENAI_API_KEY:
+        return {"reply": f"Recibí: {msg}\n\n(Nota: Falta OPENAI_API_KEY en Render.)"}
 
-# ----------------------------
-# Imagen (demo simple)
-# ----------------------------
-
-class ImageIn(BaseModel):
-    prompt: str
-
-@app.post("/image")
-async def image(payload: ImageIn):
-    """
-    DEMO: para que tu UI no falle.
-    Si luego conectas OpenAI Images, aquí reemplazas.
-    """
-    # Imagen placeholder (no IA) para que SIEMPRE se vea algo
-    # Puedes cambiarlo luego por tu generador real.
-    return {
-        "url": "https://picsum.photos/768/768",
-        "note": "Demo image (placeholder). Conecta tu generador real cuando quieras."
+    url = "https://api.openai.com/v1/chat/completions"
+    headers = {"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"}
+    data = {
+        "model": OPENAI_MODEL,
+        "messages": [
+            {"role": "system", "content": ASSISTANT_PROMPT},
+            {"role": "user", "content": msg},
+        ],
+        "temperature": 0.6,
     }
 
+    r = requests.post(url, headers=headers, json=data, timeout=90)
+    if r.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"OpenAI chat error: {r.text}")
 
-# ----------------------------
-# Video - Modo A (Reels Texto Animado)
-# (Se genera EN el frontend con Canvas + MediaRecorder)
-# Backend NO necesita hacer nada.
-# ----------------------------
-
-
-# ----------------------------
-# Video - Modo B (Realista IA)
-# Providers: runway | pika
-# ----------------------------
-
-JOBS: Dict[str, Dict[str, Any]] = {}  # job_id -> info
+    j = r.json()
+    reply = j["choices"][0]["message"]["content"]
+    return {"reply": reply}
 
 
-class RealisticVideoIn(BaseModel):
-    provider: str  # "runway" o "pika"
-    prompt: str
-    ratio: str = "1080:1920"
-    duration: int = 5
-
-
-@app.post("/video/realistic/start")
-async def realistic_video_start(payload: RealisticVideoIn):
-    provider = payload.provider.lower().strip()
-    prompt = payload.prompt.strip()
-
+# =========================
+# IMÁGENES (OpenAI o fallback)
+# =========================
+@app.post("/image")
+def image(payload: Dict[str, Any], request: Request):
+    prompt = (payload.get("prompt") or "").strip()
     if not prompt:
-        raise HTTPException(status_code=400, detail="El prompt está vacío.")
+        raise HTTPException(status_code=400, detail="prompt vacío")
+
+    # Fallback si no hay OpenAI key
+    if not OPENAI_API_KEY:
+        # imagen demo siempre visible
+        return {"image_url": "https://picsum.photos/1024/1024"}
+
+    url = "https://api.openai.com/v1/images/generations"
+    headers = {"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"}
+    data = {
+        "model": OPENAI_IMAGE_MODEL,
+        "prompt": prompt,
+        "size": "1024x1024",
+    }
+
+    r = requests.post(url, headers=headers, json=data, timeout=120)
+    if r.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"OpenAI image error: {r.text}")
+
+    j = r.json()
+    d0 = (j.get("data") or [{}])[0]
+
+    # Si devuelve URL directa:
+    if isinstance(d0, dict) and d0.get("url"):
+        return {"image_url": d0["url"]}
+
+    # Si devuelve base64:
+    if isinstance(d0, dict) and d0.get("b64_json"):
+        img_id = str(uuid.uuid4())
+        out_path = os.path.join(TMP_DIR, f"{img_id}.png")
+        with open(out_path, "wb") as f:
+            f.write(base64.b64decode(d0["b64_json"]))
+        return {"image_url": f"{_base_url(request)}/files/{img_id}.png"}
+
+    raise HTTPException(status_code=502, detail="No pude leer respuesta de imagen")
+
+
+# =========================
+# VIDEO REALISTA (Runway / Pika-Fal) -> Jobs
+# =========================
+@app.post("/video/realistic/start")
+def video_realistic_start(payload: Dict[str, Any]):
+    provider = (payload.get("provider") or "").strip().lower()
+    prompt = (payload.get("prompt") or "").strip()
+    ratio = (payload.get("ratio") or "1080:1920").strip()
+    duration = int(payload.get("duration") or 5)
+
+    if provider not in ("runway", "pika"):
+        raise HTTPException(status_code=400, detail="provider inválido: runway o pika")
+    if not prompt:
+        raise HTTPException(status_code=400, detail="prompt vacío")
 
     job_id = str(uuid.uuid4())
 
     if provider == "runway":
-        runway_key = os.getenv("RUNWAY_API_KEY") or os.getenv("RUNWAYML_API_SECRET")
-        if not runway_key:
-            raise HTTPException(
-                status_code=400,
-                detail="Falta RUNWAY_API_KEY (o RUNWAYML_API_SECRET) en Render Environment Variables."
-            )
+        if not RUNWAY_API_KEY:
+            raise HTTPException(status_code=400, detail="Falta RUNWAY_API_KEY en Render")
 
-        # Runway API: POST /v1/text_to_video con Authorization: Bearer + X-Runway-Version=2024-11-06  0
-        runway_model = os.getenv("RUNWAY_TEXT2VIDEO_MODEL", "veo3.1")  # valores aceptados en docs 1
-
-        url = "https://api.dev.runwayml.com/v1/text_to_video"
+        create_url = f"{RUNWAY_BASE}/v1/text_to_video"
         headers = {
-            "Authorization": f"Bearer {runway_key}",
-            "X-Runway-Version": "2024-11-06",
+            "Authorization": f"Bearer {RUNWAY_API_KEY}",
+            "X-Runway-Version": RUNWAY_VERSION,
             "Content-Type": "application/json",
         }
         body = {
-            "model": runway_model,
+            "model": RUNWAY_MODEL,
             "promptText": prompt,
-            "ratio": payload.ratio,
-            "duration": payload.duration,
+            "ratio": ratio,
+            "duration": duration,
         }
 
-        async with httpx.AsyncClient(timeout=60) as client:
-            r = await client.post(url, headers=headers, json=body)
-            if r.status_code >= 400:
-                raise HTTPException(status_code=502, detail=f"Runway error: {r.text}")
+        r = requests.post(create_url, headers=headers, json=body, timeout=90)
+        if r.status_code >= 400:
+            raise HTTPException(status_code=502, detail=f"Runway start error: {r.text}")
 
-        data = r.json()
-        task_id = data.get("id")
+        task_id = r.json().get("id")
         if not task_id:
-            raise HTTPException(status_code=502, detail=f"Runway no devolvió task id: {data}")
+            raise HTTPException(status_code=502, detail=f"Runway no devolvió id: {r.text}")
 
         JOBS[job_id] = {"provider": "runway", "task_id": task_id}
         return {"job_id": job_id, "status": "STARTED"}
 
-    elif provider == "pika":
-        # Pika API se usa vía Fal.ai 2
-        if fal_client is None:
-            raise HTTPException(status_code=500, detail="fal-client no está instalado. Revisa requirements.txt.")
+    # provider == pika (via Fal queue)
+    if not FAL_KEY:
+        raise HTTPException(status_code=400, detail="Falta FAL_KEY en Render")
 
-        fal_key = os.getenv("FAL_KEY")
-        if not fal_key:
-            raise HTTPException(
-                status_code=400,
-                detail="Falta FAL_KEY en Render Environment Variables (Fal.ai)."
-            )
+    # Fal queue submit
+    submit_url = f"https://queue.fal.run/{PIKA_FAL_MODEL}"
+    headers = {"Authorization": f"Key {FAL_KEY}", "Content-Type": "application/json"}
+    body = {
+        "prompt": prompt,
+        "duration": duration,
+        # algunos modelos aceptan aspect_ratio / ratio; lo mandamos en forma común:
+        "aspect_ratio": "9:16" if ratio.endswith(":1920") or ratio.endswith(":1280") else "16:9",
+    }
 
-        # Usamos modelo turbo para velocidad 3
-        model_id = os.getenv("PIKA_FAL_MODEL", "fal-ai/pika/v2/turbo/text-to-video")
+    r = requests.post(submit_url, headers=headers, json=body, timeout=90)
+    if r.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"Fal submit error: {r.text}")
 
-        # Nota: Fal puede tardar. Aquí lo lanzamos como job y lo resolvemos con /status.
-        # Guardamos el prompt para correrlo en el status si no existe request_id.
-        JOBS[job_id] = {"provider": "pika", "model": model_id, "prompt": prompt}
-        return {"job_id": job_id, "status": "STARTED"}
+    j = r.json()
+    status_url = j.get("status_url")
+    response_url = j.get("response_url")
+    if not status_url or not response_url:
+        raise HTTPException(status_code=502, detail=f"Fal no devolvió status/response: {j}")
 
-    else:
-        raise HTTPException(status_code=400, detail="Provider inválido. Usa: runway o pika.")
+    JOBS[job_id] = {"provider": "pika", "status_url": status_url, "response_url": response_url}
+    return {"job_id": job_id, "status": "STARTED"}
 
 
 @app.get("/video/realistic/status/{job_id}")
-async def realistic_video_status(job_id: str):
+def video_realistic_status(job_id: str):
     info = JOBS.get(job_id)
     if not info:
-        raise HTTPException(status_code=404, detail="job_id no encontrado.")
+        raise HTTPException(status_code=404, detail="job_id no encontrado")
 
-    provider = info["provider"]
+    provider = info.get("provider")
 
     if provider == "runway":
-        runway_key = os.getenv("RUNWAY_API_KEY") or os.getenv("RUNWAYML_API_SECRET")
-        if not runway_key:
-            raise HTTPException(status_code=400, detail="Falta RUNWAY_API_KEY en Render.")
-
         task_id = info["task_id"]
-        url = f"https://api.dev.runwayml.com/v1/tasks/{task_id}"  # GET task detail 4
+        url = f"{RUNWAY_BASE}/v1/tasks/{task_id}"
         headers = {
-            "Authorization": f"Bearer {runway_key}",
-            "X-Runway-Version": "2024-11-06",
+            "Authorization": f"Bearer {RUNWAY_API_KEY}",
+            "X-Runway-Version": RUNWAY_VERSION,
         }
 
-        async with httpx.AsyncClient(timeout=60) as client:
-            r = await client.get(url, headers=headers)
-            if r.status_code >= 400:
-                raise HTTPException(status_code=502, detail=f"Runway status error: {r.text}")
+        r = requests.get(url, headers=headers, timeout=60)
+        if r.status_code >= 400:
+            return {"status": "RUNNING"}  # no matamos por un tick
 
         data = r.json()
-        status = (data.get("status") or "").upper()
+        st = (data.get("status") or "").upper()
 
-        # Muchos tasks devuelven output con URLs cuando finaliza
         video_url = None
         out = data.get("output")
-        if isinstance(out, list) and out:
-            # suele venir lista de URLs
-            if isinstance(out[0], str):
-                video_url = out[0]
+        if isinstance(out, list) and out and isinstance(out[0], str):
+            video_url = out[0]
         if not video_url:
             video_url = _find_video_url(data)
 
-        if status in ("SUCCEEDED", "COMPLETED") and video_url:
+        if st in ("SUCCEEDED", "COMPLETED") and video_url:
             return {"status": "DONE", "video_url": video_url}
-
-        if status in ("FAILED", "CANCELED"):
+        if st in ("FAILED", "CANCELED"):
             return {"status": "ERROR", "detail": data}
 
         return {"status": "RUNNING"}
 
     if provider == "pika":
-        if fal_client is None:
-            raise HTTPException(status_code=500, detail="fal-client no está instalado.")
-        if not os.getenv("FAL_KEY"):
-            raise HTTPException(status_code=400, detail="Falta FAL_KEY en Render.")
+        headers = {"Authorization": f"Key {FAL_KEY}"}
 
-        # Para evitar depender de endpoints internos de queue,
-        # hacemos una sola ejecución cuando preguntas status por primera vez,
-        # y guardamos el resultado.
-        if "video_url" in info:
-            return {"status": "DONE", "video_url": info["video_url"]}
+        # poll status_url
+        sr = requests.get(info["status_url"], headers=headers, timeout=60)
+        if sr.status_code >= 400:
+            return {"status": "RUNNING"}
 
-        model_id = info["model"]
-        prompt = info["prompt"]
+        sj = sr.json()
+        st = (sj.get("status") or "").lower()
 
-        # Ejecuta Fal (bloquea hasta terminar). Para clips cortos suele funcionar bien.
-        # fal_client.run() está documentado en PyPI. 5
-        try:
-            result = fal_client.run(model_id, arguments={"prompt": prompt})
-        except Exception as e:
-            return {"status": "ERROR", "detail": str(e)}
+        if st in ("completed", "succeeded", "success"):
+            rr = requests.get(info["response_url"], headers=headers, timeout=60)
+            if rr.status_code >= 400:
+                return {"status": "ERROR", "detail": rr.text}
 
-        video_url = _find_video_url(result)
-        if not video_url:
-            return {"status": "ERROR", "detail": result}
+            out = rr.json()
+            video_url = _find_video_url(out)
+            if not video_url:
+                # algunos devuelven dict con video.url
+                v = out.get("video") if isinstance(out, dict) else None
+                if isinstance(v, dict):
+                    video_url = v.get("url")
 
-        info["video_url"] = video_url
-        JOBS[job_id] = info
-        return {"status": "DONE", "video_url": video_url}
+            if not video_url:
+                return {"status": "ERROR", "detail": out}
 
-    return {"status": "ERROR", "detail": "Provider desconocido."}
+            return {"status": "DONE", "video_url": video_url}
 
+        if st in ("failed", "error", "canceled"):
+            return {"status": "ERROR", "detail": sj}
 
-@app.get("/")
-async def root():
-    return {"ok": True, "service": "Corazón Studio AI API"}
+        return {"status": "RUNNING"}
+
+    return {"status": "ERROR", "detail": "Provider desconocido"}
