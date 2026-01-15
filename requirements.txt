@@ -2,5 +2,5 @@ fastapi
 uvicorn
 python-multipart
 httpx
-fal-client
 pydantic
+fal-client
