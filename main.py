@@ -1,6 +1,9 @@
 import os
+import uuid
+import subprocess
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import httpx
 import fal_client
@@ -11,11 +14,11 @@ import fal_client
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 OPENAI_IMAGE_MODEL = os.getenv("OPENAI_IMAGE_MODEL", "gpt-image-1")
-
-# Fal (para Runway/Pika vía fal_client)
 FAL_KEY = os.getenv("FAL_KEY")
-RUNWAY_API_KEY = os.getenv("RUNWAY_API_KEY")  # (si los usas directo, aquí quedan)
-PIKA_API_KEY = os.getenv("PIKA_API_KEY")
+
+BASE_DIR = os.path.dirname(__file__)
+VIDEO_DIR = os.path.join(BASE_DIR, "videos")
+os.makedirs(VIDEO_DIR, exist_ok=True)
 
 # =========================
 # APP
@@ -25,10 +28,11 @@ app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.mount("/videos", StaticFiles(directory=VIDEO_DIR), name="videos")
 
 # =========================
 # MODELS
@@ -53,114 +57,123 @@ def health():
     return {"status": "ok", "message": "Corazón Studio AI backend activo"}
 
 # =========================
-# CHAT (AMABLE + EMPÁTICO)
+# CHAT
 # =========================
 @app.post("/chat")
 async def chat(req: ChatRequest):
-    if not OPENAI_API_KEY:
-        return {"error": "Falta OPENAI_API_KEY en variables de entorno."}
-
-    payload = {
-        "model": OPENAI_MODEL,
-        "messages": [
-            {
-                "role": "system",
-                "content": (
-                    "Eres un asistente amable, profesional y empático. "
-                    "Hablas con calidez, respeto y claridad. Ayudas con paciencia."
-                ),
+    async with httpx.AsyncClient(timeout=60) as client:
+        r = await client.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {OPENAI_API_KEY}",
+                "Content-Type": "application/json",
             },
-            {"role": "user", "content": req.message},
-        ],
-    }
-
-    try:
-        async with httpx.AsyncClient(timeout=60) as client:
-            r = await client.post(
-                "https://api.openai.com/v1/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {OPENAI_API_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-            )
-        r.raise_for_status()
-        data = r.json()
-        return {"reply": data["choices"][0]["message"]["content"]}
-    except httpx.HTTPStatusError as e:
-        return {"error": f"OpenAI error: {e.response.status_code}", "details": e.response.text}
-    except Exception as e:
-        return {"error": "Error en /chat", "details": str(e)}
+            json={
+                "model": OPENAI_MODEL,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": (
+                            "Eres un asistente amable, profesional y empático. "
+                            "Hablas con calidez y respeto."
+                        ),
+                    },
+                    {"role": "user", "content": req.message},
+                ],
+            },
+        )
+    data = r.json()
+    return {"reply": data["choices"][0]["message"]["content"]}
 
 # =========================
-# IMÁGENES
+# IMAGES
 # =========================
 @app.post("/image")
 async def image(req: ImageRequest):
-    if not OPENAI_API_KEY:
-        return {"error": "Falta OPENAI_API_KEY en variables de entorno."}
-
-    try:
-        async with httpx.AsyncClient(timeout=120) as client:
-            r = await client.post(
-                "https://api.openai.com/v1/images/generations",
-                headers={
-                    "Authorization": f"Bearer {OPENAI_API_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": OPENAI_IMAGE_MODEL,
-                    "prompt": req.prompt,
-                    "size": "1024x1024",
-                },
-            )
-        r.raise_for_status()
-        return r.json()
-    except httpx.HTTPStatusError as e:
-        return {"error": f"OpenAI error: {e.response.status_code}", "details": e.response.text}
-    except Exception as e:
-        return {"error": "Error en /image", "details": str(e)}
+    async with httpx.AsyncClient(timeout=120) as client:
+        r = await client.post(
+            "https://api.openai.com/v1/images/generations",
+            headers={
+                "Authorization": f"Bearer {OPENAI_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": OPENAI_IMAGE_MODEL,
+                "prompt": req.prompt,
+                "size": "1024x1024",
+            },
+        )
+    data = r.json()
+    return {"url": data["data"][0]["url"]}
 
 # =========================
 # VIDEO
 # =========================
 @app.post("/video")
 async def video(req: VideoRequest):
-    # -------- MODO A: REELS (texto animado simple)
-    if req.mode == "reels":
+    mode = req.mode.lower().strip()
+
+    # -------- MODO A: REELS → MP4 REAL
+    if mode == "reels":
+        video_id = f"{uuid.uuid4()}.mp4"
+        out_path = os.path.join(VIDEO_DIR, video_id)
+
+        text = req.text.replace(":", "\\:").replace("'", "\\'")
+        duration = max(3, min(req.duration, 15))
+
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-f", "lavfi",
+            "-i", "color=c=#0b1220:s=1080x1920:r=30",
+            "-vf",
+            f"drawtext=text='{text}':fontcolor=white:fontsize=64:"
+            f"x=(w-text_w)/2:y=(h-text_h)/2",
+            "-t", str(duration),
+            "-pix_fmt", "yuv420p",
+            out_path
+        ]
+
+        subprocess.run(cmd, check=True)
+
         return {
             "status": "ok",
-            "type": "reels",
-            "message": "Video tipo reels generado (demo).",
-            "text": req.text,
-            "duration": req.duration,
-            "format": req.format,
+            "provider": "reels",
+            "video_url": f"/videos/{video_id}"
         }
 
-    # Para Runway/Pika vía fal_client necesitas FAL_KEY en variables
+    # -------- RUNWAY / PIKA (via FAL)
     if not FAL_KEY:
-        return {"error": "Falta FAL_KEY para usar Runway/Pika vía fal_client."}
+        return {"error": "FAL_KEY no configurada en Render"}
 
-    # -------- MODO B: RUNWAY (vía fal)
-    if req.mode == "runway":
-        try:
+    try:
+        if mode == "runway":
             result = fal_client.run(
                 "runwayml/gen2",
                 arguments={"prompt": req.text, "seconds": req.duration},
             )
-            return {"status": "ok", "provider": "runway", "result": result}
-        except Exception as e:
-            return {"error": "Error Runway (fal)", "details": str(e)}
-
-    # -------- MODO C: PIKA (vía fal)
-    if req.mode == "pika":
-        try:
+        elif mode == "pika":
             result = fal_client.run(
                 "pika/video",
                 arguments={"prompt": req.text, "seconds": req.duration},
             )
-            return {"status": "ok", "provider": "pika", "result": result}
-        except Exception as e:
-            return {"error": "Error Pika (fal)", "details": str(e)}
+        else:
+            return {"error": "Modo inválido"}
 
-    return {"error": "Modo de video no válido. Usa: reels | runway | pika"}
+        video_url = None
+        if isinstance(result, dict):
+            video_url = (
+                result.get("video", {}).get("url")
+                or result.get("video_url")
+                or result.get("url")
+            )
+
+        return {
+            "status": "ok",
+            "provider": mode,
+            "video_url": video_url,
+            "raw": result
+        }
+
+    except Exception as e:
+        return {"error": str(e)}
