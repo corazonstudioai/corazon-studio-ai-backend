@@ -85,10 +85,9 @@ def db_get(video_id: str) -> Optional[Dict[str, Any]]:
 app = FastAPI(title="Corazon Studio AI API", version="1.0.0")
 db_init()
 
-# CORS (para tu web onrender)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # si quieres, luego lo cerramos a tu dominio web
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -113,32 +112,15 @@ def root():
 def health():
     return {"ok": True}
 
-# =========================
-# CHAT (opcional)
-# =========================
 @app.post("/chat")
 async def chat(req: ChatRequest):
-    # Placeholder simple para no romper tu web si luego lo agregas
     return JSONResponse({"ok": True, "reply": f"Recibido: {req.message}"})
 
-# =========================
-# IMAGE (opcional)
-# =========================
 @app.post("/image")
 async def image(req: ImageRequest):
-    # Placeholder simple (para no romper tu web si luego lo agregas)
     return JSONResponse({"ok": True, "note": "Endpoint /image listo. Conecta aquí tu generación real cuando quieras."})
 
-# =========================
-# VIDEO (real, con persistencia de estado)
-# =========================
 async def _openai_create_video(prompt: str) -> bytes:
-    """
-    IMPORTANTE:
-    Aquí hacemos una llamada genérica.
-    Si tu modelo/endpoint exacto cambia, lo ajustamos.
-    Por ahora, esperamos que OpenAI devuelva un mp4 (bytes) o un URL.
-    """
     headers = {
         "Authorization": f"Bearer {OPENAI_API_KEY}",
         "Content-Type": "application/json",
@@ -147,39 +129,32 @@ async def _openai_create_video(prompt: str) -> bytes:
     payload = {
         "model": os.getenv("OPENAI_VIDEO_MODEL", "gpt-video-1"),
         "prompt": prompt,
-        # algunos proveedores aceptan duration/size; si no, se ignora
         "duration": 5,
     }
 
-    async with httpx.AsyncClient(timeout=120) as client:
+    async with httpx.AsyncClient(timeout=180) as client:
         r = await client.post(f"{OPENAI_BASE_URL}/videos", headers=headers, json=payload)
         if r.status_code >= 400:
             raise RuntimeError(f"OpenAI error {r.status_code}: {r.text}")
 
         data = r.json()
 
-        # Caso A: te regresa un URL directo del video
         if isinstance(data, dict) and "url" in data and data["url"]:
             vr = await client.get(data["url"])
             vr.raise_for_status()
             return vr.content
 
-        # Caso B: te regresa base64
         if isinstance(data, dict) and "video_base64" in data and data["video_base64"]:
             import base64
             return base64.b64decode(data["video_base64"])
 
-        # Caso C: estructura diferente
         raise RuntimeError("Respuesta de video no reconocida (no vino url ni base64).")
 
 @app.post("/video")
 async def video_start(req: VideoRequest):
-    # Creamos un id local (persistente) para tu frontend
     video_id = f"video_{int(time.time())}_{os.urandom(6).hex()}"
     db_upsert(video_id, "queued", 0, req.prompt)
 
-    # Procesamos en background simple (sin celery)
-    # Nota: FastAPI no tiene background robusto en serverless; Render usualmente aguanta bien.
     async def run():
         try:
             db_upsert(video_id, "processing", 20, req.prompt)
@@ -188,7 +163,6 @@ async def video_start(req: VideoRequest):
         except Exception as e:
             db_upsert(video_id, "failed", 0, req.prompt, error=str(e))
 
-    # Lanzar tarea async
     import asyncio
     asyncio.create_task(run())
 
@@ -214,5 +188,4 @@ def video_content(video_id: str):
         raise HTTPException(status_code=404, detail="video_id no existe.")
     if job["status"] != "completed" or not job["content"]:
         raise HTTPException(status_code=409, detail="El video todavía no está listo.")
-    # mp4 bytes
     return Response(content=job["content"], media_type="video/mp4")
