@@ -1,152 +1,96 @@
-import os
-from typing import Optional, Dict, Any
-
-import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
+import uuid
 
-# =========================
-# Config
-# =========================
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
-if not OPENAI_API_KEY:
-    raise RuntimeError("Falta OPENAI_API_KEY en variables de entorno (Render).")
+app = FastAPI(title="Corazón Studio AI API", version="1.0.0")
 
-VIDEO_MODEL = os.getenv("OPENAI_VIDEO_MODEL", "sora-2")
-VIDEO_SIZE = os.getenv("OPENAI_VIDEO_SIZE", "1280x720")  # recomendado por docs
-DEFAULT_SECONDS = int(os.getenv("OPENAI_VIDEO_SECONDS", "5"))
-
-# OJO: pon aquí tu web de Render para permitir CORS
-ALLOWED_ORIGINS = [
-    "https://corazon-studio-ai-web.onrender.com",
-    "http://localhost:5173",
-    "http://localhost:3000",
-]
-
-OPENAI_BASE = "https://api.openai.com/v1"
-
-app = FastAPI(title="Corazon Studio AI API", version="1.0.0")
-
+# CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# =========================
-# Schemas
-# =========================
+# ---------
+# MODELOS
+# ---------
+
+class ChatRequest(BaseModel):
+    prompt: str
+
+class ImageRequest(BaseModel):
+    prompt: str
+
 class VideoRequest(BaseModel):
-    prompt: str = Field(..., min_length=3)
-    seconds: Optional[int] = Field(default=None, ge=1, le=20)
-    size: Optional[str] = None  # ejemplo: "1280x720"
+    prompt: str
 
+# ----------------
+# ENDPOINTS BASE
+# ----------------
 
-# =========================
-# Helpers
-# =========================
-def _auth_headers() -> Dict[str, str]:
-    return {"Authorization": f"Bearer {OPENAI_API_KEY}"}
-
-
-# =========================
-# Health / Root
-# =========================
 @app.get("/")
-def root() -> Dict[str, Any]:
-    return {"ok": True, "service": "corazon-studio-ai-backend"}
-
-@app.get("/health")
-def health() -> Dict[str, Any]:
+def root():
     return {"ok": True}
 
+@app.get("/health")
+def health():
+    return {"status": "healthy"}
 
-# =========================
-# VIDEO (Sora) — FIX REAL
-# =========================
-@app.post("/video")
-async def video_start(payload: VideoRequest) -> Dict[str, Any]:
-    """
-    Crea un job async de video.
-    IMPORTANTE: La API usa `seconds`, NO `duration`. 1
-    """
-    seconds = payload.seconds or DEFAULT_SECONDS
-    size = payload.size or VIDEO_SIZE
+# ----------------
+# CHAT (SIMULADO)
+# ----------------
 
-    # La API de /videos requiere multipart/form-data (prompt/model/size/seconds). 2
-    form = {
-        "prompt": payload.prompt,
-        "model": VIDEO_MODEL,
-        "size": size,
-        "seconds": str(seconds),
-    }
-
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        r = await client.post(
-            f"{OPENAI_BASE}/videos",
-            headers=_auth_headers(),
-            files=form,  # multipart/form-data
-        )
-
-    if r.status_code >= 400:
-        raise HTTPException(status_code=500, detail=r.text)
-
-    data = r.json()
+@app.post("/chat")
+def chat(req: ChatRequest):
     return {
-        "ok": True,
-        "video_id": data.get("id"),
-        "status": data.get("status"),
-        "progress": data.get("progress", 0),
-        "raw": data,
+        "response": f"Respuesta simulada para: {req.prompt}"
     }
 
+# ----------------
+# IMAGE (SIMULADO)
+# ----------------
+
+@app.post("/image")
+def image(req: ImageRequest):
+    return {
+        "image_url": "https://placehold.co/512x512?text=Imagen+Generada"
+    }
+
+# ----------------
+# VIDEO OPCIÓN 1
+# (REELS SIMULADO)
+# ----------------
+
+VIDEOS = {}
+
+@app.post("/video")
+def start_video(req: VideoRequest):
+    video_id = f"video_{uuid.uuid4().hex[:12]}"
+    VIDEOS[video_id] = {
+        "status": "completed",
+        "url": "https://samplelib.com/lib/preview/mp4/sample-5s.mp4"
+    }
+    return {
+        "video_id": video_id,
+        "status": "completed"
+    }
 
 @app.get("/video/{video_id}")
-async def video_status(video_id: str) -> Dict[str, Any]:
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        r = await client.get(
-            f"{OPENAI_BASE}/videos/{video_id}",
-            headers={**_auth_headers(), "accept": "application/json"},
-        )
-
-    if r.status_code == 404:
-        raise HTTPException(status_code=404, detail="video_id no existe.")
-    if r.status_code >= 400:
-        raise HTTPException(status_code=500, detail=r.text)
-
-    data = r.json()
+def video_status(video_id: str):
+    if video_id not in VIDEOS:
+        raise HTTPException(status_code=404, detail="video_id no existe")
     return {
-        "ok": True,
-        "video_id": data.get("id"),
-        "status": data.get("status"),
-        "progress": data.get("progress", 0),
-        "error": data.get("error"),
-        "raw": data,
+        "video_id": video_id,
+        "status": VIDEOS[video_id]["status"]
     }
 
-
 @app.get("/video/{video_id}/content")
-async def video_content(video_id: str):
-    """
-    Descarga el MP4 cuando el estado sea completed.
-    Docs: GET /videos/{video_id}/content 3
-    """
-    async with httpx.AsyncClient(timeout=None) as client:
-        r = await client.get(
-            f"{OPENAI_BASE}/videos/{video_id}/content",
-            headers=_auth_headers(),
-            follow_redirects=True,
-        )
-
-    if r.status_code == 404:
-        raise HTTPException(status_code=404, detail="video_id no existe.")
-    if r.status_code >= 400:
-        raise HTTPException(status_code=500, detail=r.text)
-
-    # Stream del mp4
-    content_type = r.headers.get("content-type", "video/mp4")
-    return StreamingResponse(iter([r.content]), media_type=content_type)
+def video_content(video_id: str):
+    if video_id not in VIDEOS:
+        raise HTTPException(status_code=404, detail="video_id no existe")
+    return {
+        "video_url": VIDEOS[video_id]["url"]
+    }
