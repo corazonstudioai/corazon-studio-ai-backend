@@ -1,5 +1,6 @@
 fastapi
-uvicorn
-httpx
-pydantic
+uvicorn[standard]
 python-multipart
+httpx
+fal-client
+pydantic
