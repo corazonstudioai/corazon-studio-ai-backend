@@ -4,7 +4,7 @@ python-multipart
 httpx
 fal-client
 pydantic
+requests
 pillow
-numpy
 imageio
 imageio-ffmpeg
