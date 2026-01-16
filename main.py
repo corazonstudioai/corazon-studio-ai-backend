@@ -21,10 +21,11 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 OPENAI_IMAGE_MODEL = os.getenv("OPENAI_IMAGE_MODEL", "gpt-image-1")
 
-RUNWAY_API_KEY = os.getenv("RUNWAY_API_KEY")
-PIKA_API_KEY = os.getenv("PIKA_API_KEY")
+RUNWAY_API_KEY = os.getenv("RUNWAY_API_KEY")  # (no se usa directo; usamos FAL)
+PIKA_API_KEY = os.getenv("PIKA_API_KEY")      # (no se usa directo; usamos FAL)
 
 # ✅ FAL: usa la llave desde Render (Environment Variables)
+# Asegúrate de tener FAL_KEY configurada en Render
 fal_client.api_key = os.getenv("FAL_KEY")
 
 # Carpeta para guardar mp4
@@ -97,7 +98,6 @@ def health():
 # =========================
 @app.get("/app", response_class=HTMLResponse)
 def app_ui():
-    # Página simple y bonita para probar todo desde el navegador
     return """
 <!doctype html>
 <html lang="es">
@@ -221,7 +221,6 @@ def app_ui():
         body: JSON.stringify({prompt})
       });
       const data = await r.json();
-      // OpenAI images API suele devolver data[0].url o data[0].b64_json (depende del modelo/config)
       const url = data?.data?.[0]?.url;
       if(url){
         img.src = url;
@@ -299,10 +298,13 @@ def app_ui():
 """
 
 # =========================
-# CHAT (AMABLE + EMPÁTICO)
+# CHAT
 # =========================
 @app.post("/chat")
 async def chat(req: ChatRequest):
+    if not OPENAI_API_KEY:
+        return {"status": "error", "message": "OPENAI_API_KEY no está configurada en Render"}
+
     async with httpx.AsyncClient(timeout=60) as client:
         r = await client.post(
             "https://api.openai.com/v1/chat/completions",
@@ -324,6 +326,7 @@ async def chat(req: ChatRequest):
                 ],
             },
         )
+
     data = r.json()
     return {"reply": data["choices"][0]["message"]["content"]}
 
@@ -332,6 +335,9 @@ async def chat(req: ChatRequest):
 # =========================
 @app.post("/image")
 async def image(req: ImageRequest):
+    if not OPENAI_API_KEY:
+        return {"status": "error", "message": "OPENAI_API_KEY no está configurada en Render"}
+
     async with httpx.AsyncClient(timeout=120) as client:
         r = await client.post(
             "https://api.openai.com/v1/images/generations",
@@ -412,7 +418,7 @@ def _make_reels_mp4(text: str, duration: int, fmt: str, out_path: Path):
     writer.close()
 
 # =========================
-# VIDEO (tu endpoint original) + CORRECCION PARA FAL
+# VIDEO
 # =========================
 @app.post("/video")
 async def video(req: VideoRequest):
@@ -431,35 +437,45 @@ async def video(req: VideoRequest):
             filename=out_name,
         )
 
+    # -------- VALIDACION FAL
+    if mode in ("fal", "runway", "pika"):
+        if not os.getenv("FAL_KEY"):
+            return {"status": "error", "message": "FAL_KEY no está configurada en Render"}
+        # Si tu saldo en FAL está en 0.00, no generará videos hasta que agregues créditos.
+        # Eso se ve en "Uso y facturación" dentro de fal.ai
+
     # -------- MODO B: RUNWAY (via FAL)
     if mode == "runway":
-        result = fal_client.run(
-            "runwayml/gen2",
-            arguments={
-                "prompt": req.text,
-                "seconds": req.duration,
-            },
-        )
-        video_url = _extract_video_url(result)
-        return {"status": "ok", "provider": "runway", "video_url": video_url, "result": result}
+        try:
+            result = fal_client.run(
+                "runwayml/gen2",
+                arguments={
+                    "prompt": req.text,
+                    "seconds": max(1, int(req.duration)),
+                },
+            )
+            video_url = _extract_video_url(result)
+            return {"status": "ok", "provider": "runway", "video_url": video_url, "result": result}
+        except Exception as e:
+            return {"status": "error", "message": "FAL/Runway error", "detail": str(e)}
 
     # -------- MODO C: PIKA (via FAL)
     if mode == "pika":
-        result = fal_client.run(
-            "pika/video",
-            arguments={
-                "prompt": req.text,
-                "seconds": req.duration,
-            },
-        )
-        video_url = _extract_video_url(result)
-        return {"status": "ok", "provider": "pika", "video_url": video_url, "result": result}
+        try:
+            result = fal_client.run(
+                "pika/video",
+                arguments={
+                    "prompt": req.text,
+                    "seconds": max(1, int(req.duration)),
+                },
+            )
+            video_url = _extract_video_url(result)
+            return {"status": "ok", "provider": "pika", "video_url": video_url, "result": result}
+        except Exception as e:
+            return {"status": "error", "message": "FAL/Pika error", "detail": str(e)}
 
-    # -------- MODO D: FAL (alias: usamos Runway Gen2 para evitar 500 de Kling)
+    # -------- MODO D: FAL (alias estable: usa Runway Gen2)
     if mode == "fal":
-        if not os.getenv("FAL_KEY"):
-            return {"status": "error", "message": "FAL_KEY no está configurada en Render"}
-
         try:
             result = fal_client.run(
                 "runwayml/gen2",
