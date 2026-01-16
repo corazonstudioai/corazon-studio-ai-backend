@@ -24,6 +24,10 @@ OPENAI_IMAGE_MODEL = os.getenv("OPENAI_IMAGE_MODEL", "gpt-image-1")
 RUNWAY_API_KEY = os.getenv("RUNWAY_API_KEY")
 PIKA_API_KEY = os.getenv("PIKA_API_KEY")
 
+# ✅ FAL: usa la llave desde Render (Environment Variables)
+# (Asegúrate de tener FAL_KEY configurada en Render)
+fal_client.api_key = os.getenv("FAL_KEY")
+
 # Carpeta para guardar mp4
 OUT_DIR = Path("/tmp/out")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -51,10 +55,44 @@ class ImageRequest(BaseModel):
     prompt: str
 
 class VideoRequest(BaseModel):
-    mode: str  # reels | runway | pika
+    mode: str  # reels | runway | pika | fal
     text: str = ""
     duration: int = 6
     format: str = "9:16"  # "9:16" o "16:9"
+
+# =========================
+# HELPERS: EXTRAER URL DE VIDEO (para que "se vea" fácil)
+# =========================
+def _extract_video_url(result: dict):
+    """
+    Intenta sacar una URL de video desde respuestas comunes de FAL.
+    Devuelve None si no encuentra.
+    """
+    if not isinstance(result, dict):
+        return None
+
+    # Caso típico: {"video": {"url": "..."}}
+    v = result.get("video")
+    if isinstance(v, dict) and v.get("url"):
+        return v.get("url")
+
+    # Caso: {"videos": [{"url": "..."}]}
+    vids = result.get("videos")
+    if isinstance(vids, list) and len(vids) > 0:
+        first = vids[0]
+        if isinstance(first, dict) and first.get("url"):
+            return first.get("url")
+
+    # Caso: {"output": {"url": "..."}}
+    out = result.get("output")
+    if isinstance(out, dict) and out.get("url"):
+        return out.get("url")
+
+    # Caso: {"url": "..."}
+    if result.get("url"):
+        return result.get("url")
+
+    return None
 
 # =========================
 # HEALTH
@@ -185,7 +223,36 @@ def _make_reels_mp4(text: str, duration: int, fmt: str, out_path: Path):
     writer.close()
 
 # =========================
-# VIDEO
+# ✅ NUEVO: VIDEO SIMPLE “QUE SE VEA” (devuelve video_url directo)
+# =========================
+@app.post("/generate-video")
+def generate_video():
+    """
+    Genera un video corto con FAL y devuelve video_url listo para mostrar en la web.
+    """
+    if not os.getenv("FAL_KEY"):
+        return {"status": "error", "message": "FAL_KEY no está configurada en Render"}
+
+    result = fal_client.subscribe(
+        "fal-ai/kling-video/v2.6",
+        arguments={
+            "prompt": (
+                "Una escena familiar cálida y cinematográfica: una niña sonriente "
+                "caminando en un parque al atardecer, iluminación suave, estilo realista"
+            ),
+            "duration": 3,
+            "aspect_ratio": "9:16",
+        },
+    )
+
+    video_url = _extract_video_url(result)
+    if not video_url:
+        return {"status": "error", "message": "No llegó video_url", "raw": result}
+
+    return {"status": "ok", "video_url": video_url}
+
+# =========================
+# VIDEO (tu endpoint original, mejorado para que también devuelva video_url)
 # =========================
 @app.post("/video")
 async def video(req: VideoRequest):
@@ -207,7 +274,6 @@ async def video(req: VideoRequest):
 
     # -------- MODO B: RUNWAY (via FAL)
     if mode == "runway":
-        # Nota: fal_client usa FAL_KEY en variables de entorno
         result = fal_client.run(
             "runwayml/gen2",
             arguments={
@@ -215,7 +281,13 @@ async def video(req: VideoRequest):
                 "seconds": req.duration,
             },
         )
-        return {"status": "ok", "provider": "runway", "result": result}
+        video_url = _extract_video_url(result)
+        return {
+            "status": "ok",
+            "provider": "runway",
+            "video_url": video_url,
+            "result": result,
+        }
 
     # -------- MODO C: PIKA (via FAL)
     if mode == "pika":
@@ -226,6 +298,34 @@ async def video(req: VideoRequest):
                 "seconds": req.duration,
             },
         )
-        return {"status": "ok", "provider": "pika", "result": result}
+        video_url = _extract_video_url(result)
+        return {
+            "status": "ok",
+            "provider": "pika",
+            "video_url": video_url,
+            "result": result,
+        }
 
-    return {"error": "Modo de video no válido. Usa: reels | runway | pika"}
+    # -------- MODO D: FAL (alias)
+    if mode == "fal":
+        # mismo que /generate-video pero configurable
+        if not os.getenv("FAL_KEY"):
+            return {"status": "error", "message": "FAL_KEY no está configurada en Render"}
+
+        result = fal_client.subscribe(
+            "fal-ai/kling-video/v2.6",
+            arguments={
+                "prompt": req.text or "Una escena familiar cálida y cinematográfica",
+                "duration": max(1, int(req.duration)),
+                "aspect_ratio": "9:16" if (req.format or "9:16") == "9:16" else "16:9",
+            },
+        )
+        video_url = _extract_video_url(result)
+        return {
+            "status": "ok",
+            "provider": "fal",
+            "video_url": video_url,
+            "result": result,
+        }
+
+    return {"error": "Modo de video no válido. Usa: reels | runway | pika | fal"}
