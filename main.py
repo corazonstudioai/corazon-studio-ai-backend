@@ -3,9 +3,9 @@ import uuid
 import base64
 from pathlib import Path
 
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from pydantic import BaseModel
 import httpx
 
@@ -22,14 +22,11 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 OPENAI_IMAGE_MODEL = os.getenv("OPENAI_IMAGE_MODEL", "gpt-image-1")
 
-# Puedes dejar estas por si luego las usas
-RUNWAY_API_KEY = os.getenv("RUNWAY_API_KEY")
-PIKA_API_KEY = os.getenv("PIKA_API_KEY")
-
-# ✅ FAL key (Render Environment Variable)
+# FAL (Render Environment Variable)
+# OJO: tu llave de FAL NO tiene que empezar con "FAL". Solo debe estar en FAL_KEY.
 fal_client.api_key = os.getenv("FAL_KEY")
 
-# Carpeta temporal para guardar archivos
+# Carpeta temporal (Render permite /tmp)
 OUT_DIR = Path("/tmp/out")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -56,38 +53,21 @@ class ImageRequest(BaseModel):
     prompt: str
 
 class VideoRequest(BaseModel):
-    mode: str  # reels | cine | runway | pika
+    mode: str  # reels | fal | runway | pika (fal recomendado)
     text: str = ""
-    duration: int = 4
-    format: str = "9:16"  # "9:16" o "16:9"
+    duration: int = 5          # 5 o 10 para Kling
+    format: str = "9:16"       # 9:16 | 16:9 | 1:1
+    quality: str = "512p"      # 512p | 720p (solo etiqueta UI)
+    cfg: float = 0.5           # 0..1 (Kling)
 
 # =========================
 # HELPERS
 # =========================
-def _base_url(req: Request) -> str:
-    # Devuelve el dominio correcto para construir urls como /file/xxx.png
-    # Ej: https://corazon-studio-ai-backend-3.onrender.com
-    return str(req.base_url).rstrip("/")
-
-def _save_b64_png_to_tmp(b64_data: str) -> Path:
-    """
-    Convierte b64_json (OpenAI) a PNG en /tmp/out.
-    Retorna el path del archivo guardado.
-    """
-    out_name = f"img_{uuid.uuid4().hex}.png"
-    out_path = OUT_DIR / out_name
-    img_bytes = base64.b64decode(b64_data)
-    out_path.write_bytes(img_bytes)
-    return out_path
-
-def _extract_video_url(result):
-    """
-    Intenta sacar una URL de video desde respuestas comunes de FAL.
-    """
+def _extract_video_url(result: dict):
+    """Extrae URL de video desde salidas típicas."""
     if not isinstance(result, dict):
         return None
 
-    # casos típicos
     v = result.get("video")
     if isinstance(v, dict) and v.get("url"):
         return v.get("url")
@@ -107,37 +87,43 @@ def _extract_video_url(result):
 
     return None
 
+def _save_bytes(tmp_bytes: bytes, suffix: str) -> str:
+    """Guarda bytes en /tmp y devuelve la ruta."""
+    name = f"{uuid.uuid4().hex}{suffix}"
+    path = OUT_DIR / name
+    path.write_bytes(tmp_bytes)
+    return str(path)
+
+def _openai_image_url_or_data(payload: dict):
+    """
+    OpenAI Images puede regresar:
+    - data[0].url
+    - data[0].b64_json
+    Retornamos (kind, value) donde kind: "url" | "data_url" | None
+    """
+    try:
+        item = payload.get("data", [None])[0]
+        if not item:
+            return None, None
+
+        if item.get("url"):
+            return "url", item["url"]
+
+        b64 = item.get("b64_json")
+        if b64:
+            raw = base64.b64decode(b64)
+            data_url = "data:image/png;base64," + base64.b64encode(raw).decode("utf-8")
+            return "data_url", data_url
+    except Exception:
+        pass
+    return None, None
+
 # =========================
 # HEALTH
 # =========================
 @app.get("/")
 def health():
     return {"status": "ok", "message": "Corazón Studio AI backend activo"}
-
-# =========================
-# SERVIR ARCHIVOS TEMPORALES (IMÁGENES/VIDEOS)
-# =========================
-@app.get("/file/{name}")
-def get_file(name: str):
-    # Seguridad básica: solo nombres de archivo, sin rutas
-    if "/" in name or "\\" in name or ".." in name:
-        raise HTTPException(status_code=400, detail="Nombre de archivo inválido")
-
-    path = OUT_DIR / name
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="Archivo no encontrado")
-
-    # Detectar tipo básico por extensión
-    ext = path.suffix.lower()
-    media = "application/octet-stream"
-    if ext in [".png"]:
-        media = "image/png"
-    elif ext in [".jpg", ".jpeg"]:
-        media = "image/jpeg"
-    elif ext in [".mp4"]:
-        media = "video/mp4"
-
-    return FileResponse(str(path), media_type=media, filename=name)
 
 # =========================
 # UI BONITA (BOTONES)
@@ -152,27 +138,50 @@ def app_ui():
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Corazón Studio AI</title>
   <style>
-    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;margin:0;background:#0b1020;color:#e9eeff}
+    :root{
+      --bg:#070b18; --card:rgba(255,255,255,.06); --stroke:rgba(255,255,255,.12);
+      --ink:#eaf0ff; --muted:rgba(234,240,255,.78);
+      --btn1:#2563eb; --btn2:#7c3aed;
+    }
+    *{box-sizing:border-box}
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;margin:0;background:radial-gradient(1200px 600px at 30% -10%, rgba(124,58,237,.35), transparent 60%),
+                                                     radial-gradient(900px 500px at 90% 10%, rgba(37,99,235,.25), transparent 55%),
+                                                     var(--bg);
+         color:var(--ink)}
     .wrap{max-width:980px;margin:0 auto;padding:22px}
-    .title{font-size:28px;font-weight:900;margin:10px 0 6px}
-    .sub{opacity:.85;margin:0 0 16px}
+    .title{font-size:30px;font-weight:900;margin:12px 0 4px;letter-spacing:.2px}
+    .sub{margin:0 0 18px;color:var(--muted)}
     .grid{display:grid;grid-template-columns:1fr;gap:14px}
     @media(min-width:900px){.grid{grid-template-columns:1fr 1fr}}
-    .card{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:18px;padding:16px}
-    textarea,input,select{width:100%;border-radius:12px;border:1px solid rgba(255,255,255,.16);background:rgba(0,0,0,.25);color:#fff;padding:12px;outline:none}
-    button{width:100%;padding:12px 14px;border-radius:12px;border:0;background:#7c3aed;color:white;font-weight:900;cursor:pointer}
+    .card{background:var(--card);border:1px solid var(--stroke);border-radius:18px;padding:16px;backdrop-filter: blur(10px)}
+    h3{margin:0 0 10px}
+    label{display:block;font-size:12px;color:var(--muted);margin:10px 0 6px}
+    textarea,input,select{
+      width:100%;border-radius:12px;border:1px solid rgba(255,255,255,.16);
+      background:rgba(0,0,0,.25);color:#fff;padding:12px;outline:none
+    }
+    button{
+      width:100%;padding:12px 14px;border-radius:12px;border:0;
+      background:linear-gradient(90deg,var(--btn1),var(--btn2));
+      color:white;font-weight:900;cursor:pointer
+    }
     button:disabled{opacity:.6;cursor:not-allowed}
     .row{display:flex;gap:10px}
     .row>*{flex:1}
-    .out{white-space:pre-wrap;background:rgba(0,0,0,.25);border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:12px;min-height:68px}
-    .small{font-size:12px;opacity:.85;margin-top:8px}
+    .out{
+      white-space:pre-wrap;background:rgba(0,0,0,.25);
+      border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:12px;min-height:68px
+    }
+    .hint{font-size:12px;color:var(--muted);margin-top:8px}
     img,video{width:100%;border-radius:14px;border:1px solid rgba(255,255,255,.12);margin-top:10px}
+    .ok{color:#a7f3d0}
+    .err{color:#fecaca}
   </style>
 </head>
 <body>
 <div class="wrap">
   <div class="title">Corazón Studio AI ✨</div>
-  <p class="sub">Chat, Imagen, Reels MP4 y Video cine realista (texto → video).</p>
+  <p class="sub">Chat, imágenes y <b>video cine realista (texto → video)</b>.</p>
 
   <div class="grid">
     <div class="card">
@@ -180,24 +189,24 @@ def app_ui():
       <textarea id="chatText" rows="3" placeholder="Escribe tu mensaje..."></textarea>
       <div style="height:10px"></div>
       <button id="chatBtn">Enviar</button>
+      <div class="hint">Tip: si no responde, revisa que el backend esté activo.</div>
       <div style="height:10px"></div>
       <div class="out" id="chatOut"></div>
-      <div class="small">Tip: si no responde, revisa que el backend esté activo.</div>
     </div>
 
     <div class="card">
-      <h3>🖼️ Imagen (OpenAI)</h3>
+      <h3>🖼️ Imagen</h3>
       <textarea id="imgText" rows="3" placeholder="Describe la imagen..."></textarea>
       <div style="height:10px"></div>
       <button id="imgBtn">Generar</button>
-      <div id="imgOut" class="small"></div>
+      <div id="imgOut" class="hint"></div>
       <img id="imgPreview" style="display:none" />
     </div>
 
     <div class="card">
       <h3>🎞️ Reels MP4 (local)</h3>
       <textarea id="reelsText" rows="3" placeholder="Texto para el reels..."></textarea>
-      <div style="height:10px"></div>
+      <label>Duración y formato</label>
       <div class="row">
         <input id="reelsDur" type="number" value="6" min="1" />
         <select id="reelsFmt">
@@ -207,30 +216,45 @@ def app_ui():
       </div>
       <div style="height:10px"></div>
       <button id="reelsBtn">Crear Reels (descargar MP4)</button>
-      <div id="reelsOut" class="small"></div>
+      <div id="reelsOut" class="hint"></div>
     </div>
 
     <div class="card">
       <h3>🎬 Video cine realista (texto → video)</h3>
-      <textarea id="vidText" rows="3" placeholder="Ej: Una niña feliz caminando en un parque al atardecer, estilo cine realista..."></textarea>
-      <div style="height:10px"></div>
+      <textarea id="vidText" rows="3" placeholder="Ej: Una niña sonriente caminando en un parque al atardecer, estilo cinematográfico, luz cálida, cámara suave, realista"></textarea>
+
+      <label>Duración y formato</label>
       <div class="row">
-        <input id="vidDur" type="number" value="4" min="1" max="10" />
+        <select id="vidDur">
+          <option value="5">5s</option>
+          <option value="10">10s</option>
+        </select>
         <select id="vidFmt">
           <option value="9:16">9:16</option>
           <option value="16:9">16:9</option>
+          <option value="1:1">1:1</option>
         </select>
       </div>
+
+      <label>CFG (qué tanto obedece el prompt)</label>
+      <div class="row">
+        <input id="vidCfg" type="number" value="0.5" min="0" max="1" step="0.1" />
+        <select id="vidQuality">
+          <option value="512p">Calidad 512p (más rápido)</option>
+          <option value="720p">Calidad 720p (más lento)</option>
+        </select>
+      </div>
+
       <div style="height:10px"></div>
       <button id="vidBtn">Generar Video</button>
-      <div id="vidOut" class="small"></div>
+      <div id="vidOut" class="hint"></div>
       <video id="vidPreview" controls playsinline style="display:none"></video>
     </div>
   </div>
 </div>
 
 <script>
-  const apiBase = "";
+  const apiBase = ""; // mismo dominio del backend
 
   function setLoading(btn, on){
     btn.disabled = on;
@@ -276,15 +300,19 @@ def app_ui():
         body: JSON.stringify({prompt})
       });
       const data = await r.json();
-      if(data.image_url){
-        img.src = data.image_url;
+      if(data?.url){
+        img.src = data.url;
         img.style.display="block";
-        info.textContent = "✅ Imagen lista";
+        info.innerHTML = '<span class="ok">✅ ¡imagen lista!</span>';
+      }else if(data?.data_url){
+        img.src = data.data_url;
+        img.style.display="block";
+        info.innerHTML = '<span class="ok">✅ ¡imagen lista!</span>';
       }else{
-        info.textContent = "Respuesta: " + JSON.stringify(data,null,2);
+        info.innerHTML = '<span class="err">⚠️ No llegó url/data_url</span><br/>' + JSON.stringify(data,null,2);
       }
     }catch(e){
-      info.textContent = "Error: " + e;
+      info.innerHTML = '<span class="err">Error:</span> ' + e;
     }
     setLoading(imgBtn,false);
   };
@@ -311,41 +339,45 @@ def app_ui():
       a.href = url;
       a.download = "reels.mp4";
       a.click();
-      out.textContent = "✅ Listo. Descargando reels.mp4";
+      out.innerHTML = '<span class="ok">Listo ✅ Descargando reels.mp4</span>';
     }catch(e){
-      out.textContent = "Error: " + e;
+      out.innerHTML = '<span class="err">Error:</span> ' + e;
     }
     setLoading(reelsBtn,false);
   };
 
-  // VIDEO CINE
+  // VIDEO CINE (FAL -> Kling v2 master)
   const vidBtn = document.getElementById("vidBtn");
   vidBtn.dataset.label = "Generar Video";
   vidBtn.onclick = async () => {
     setLoading(vidBtn,true);
-    const text = document.getElementById("vidText").value.trim();
-    const duration = parseInt(document.getElementById("vidDur").value || "4",10);
+    const prompt = document.getElementById("vidText").value.trim();
+    const duration = parseInt(document.getElementById("vidDur").value || "5", 10);
     const format = document.getElementById("vidFmt").value;
+    const cfg = parseFloat(document.getElementById("vidCfg").value || "0.5");
+    const quality = document.getElementById("vidQuality").value;
+
     const out = document.getElementById("vidOut");
     const vid = document.getElementById("vidPreview");
     out.textContent = "";
     vid.style.display="none";
+
     try{
       const r = await fetch(apiBase + "/video", {
         method:"POST",
         headers:{ "Content-Type":"application/json" },
-        body: JSON.stringify({mode:"cine", text, duration, format})
+        body: JSON.stringify({mode:"fal", text: prompt, duration, format, quality, cfg})
       });
       const data = await r.json();
       if(data.video_url){
         vid.src = data.video_url;
         vid.style.display="block";
-        out.textContent = "✅ Video listo";
+        out.innerHTML = '<span class="ok">Video listo ✅</span>';
       }else{
-        out.textContent = "Respuesta: " + JSON.stringify(data,null,2);
+        out.innerHTML = '<span class="err">No llegó video_url</span><br/>' + JSON.stringify(data,null,2);
       }
     }catch(e){
-      out.textContent = "Error: " + e;
+      out.innerHTML = '<span class="err">Error:</span> ' + e;
     }
     setLoading(vidBtn,false);
   };
@@ -359,6 +391,8 @@ def app_ui():
 # =========================
 @app.post("/chat")
 async def chat(req: ChatRequest):
+    if not OPENAI_API_KEY:
+        return {"status": "error", "message": "OPENAI_API_KEY no está configurada"}
     async with httpx.AsyncClient(timeout=60) as client:
         r = await client.post(
             "https://api.openai.com/v1/chat/completions",
@@ -369,19 +403,31 @@ async def chat(req: ChatRequest):
             json={
                 "model": OPENAI_MODEL,
                 "messages": [
-                    {"role": "system", "content": "Eres un asistente amable, profesional y empático."},
+                    {
+                        "role": "system",
+                        "content": (
+                            "Eres un asistente amable, profesional y empático. "
+                            "Hablas con calidez, respeto y claridad. Ayudas con paciencia."
+                        ),
+                    },
                     {"role": "user", "content": req.message},
                 ],
             },
         )
     data = r.json()
-    return {"reply": data["choices"][0]["message"]["content"]}
+    try:
+        return {"reply": data["choices"][0]["message"]["content"]}
+    except Exception:
+        return {"status": "error", "raw": data}
 
 # =========================
-# IMÁGENES (ARREGLADO: URL o b64_json → image_url SIEMPRE)
+# IMÁGENES (SIEMPRE DEVUELVE algo visible: url o data_url)
 # =========================
 @app.post("/image")
-async def image(req: ImageRequest, request: Request):
+async def image(req: ImageRequest):
+    if not OPENAI_API_KEY:
+        return {"status": "error", "message": "OPENAI_API_KEY no está configurada"}
+
     async with httpx.AsyncClient(timeout=120) as client:
         r = await client.post(
             "https://api.openai.com/v1/images/generations",
@@ -396,35 +442,25 @@ async def image(req: ImageRequest, request: Request):
             },
         )
 
-    data = r.json()
+    payload = r.json()
+    kind, value = _openai_image_url_or_data(payload)
+    if kind == "url":
+        return {"status": "ok", "url": value}
+    if kind == "data_url":
+        return {"status": "ok", "data_url": value}
 
-    # Caso A: OpenAI devuelve url directa
-    url = data.get("data", [{}])[0].get("url")
-    if url:
-        return {"status": "ok", "image_url": url}
-
-    # Caso B: OpenAI devuelve b64_json
-    b64 = data.get("data", [{}])[0].get("b64_json")
-    if b64:
-        saved = _save_b64_png_to_tmp(b64)
-        img_url = f"{_base_url(request)}/file/{saved.name}"
-        return {"status": "ok", "image_url": img_url}
-
-    # Si no vino nada usable:
-    return {"status": "error", "message": "No se pudo obtener imagen desde OpenAI", "raw": data}
+    # fallback: devuelve respuesta cruda para ver el error exacto
+    return {"status": "error", "message": "No se pudo obtener url/b64_json", "raw": payload}
 
 # =========================
-# HELPERS: REELS MP4
+# HELPERS: REELS MP4 (local)
 # =========================
 def _reels_size(fmt: str):
-    if fmt.strip() == "16:9":
-        return (1280, 720)
-    return (720, 1280)
+    return (1280, 720) if fmt.strip() == "16:9" else (720, 1280)
 
 def _wrap_text(text: str, max_chars: int = 22):
     words = text.split()
-    lines = []
-    line = ""
+    lines, line = [], ""
     for w in words:
         if len(line) + len(w) + 1 <= max_chars:
             line = (line + " " + w).strip()
@@ -478,67 +514,64 @@ def _make_reels_mp4(text: str, duration: int, fmt: str, out_path: Path):
 
 # =========================
 # VIDEO
+# - reels: genera mp4 local (descarga)
+# - fal: texto->video realista con Kling v2 master (FAL)
 # =========================
 @app.post("/video")
-async def video(req: VideoRequest, request: Request):
+async def video(req: VideoRequest):
     mode = (req.mode or "").strip().lower()
 
-    # -------- MODO REELS (MP4 descargable)
+    # -------- A) REELS MP4 LOCAL
     if mode == "reels":
         out_name = f"reels_{uuid.uuid4().hex}.mp4"
         out_path = OUT_DIR / out_name
         _make_reels_mp4(req.text or " ", max(1, int(req.duration)), req.format, out_path)
         return FileResponse(path=str(out_path), media_type="video/mp4", filename=out_name)
 
-    # -------- MODO CINE (texto → video realista, estable)
-    # Usamos Runway Gen2 via FAL (NO depende de image_url, así se evita el error)
-    if mode in ["cine", "runway"]:
-        if not fal_client.api_key:
+    # -------- B) VIDEO CINE REALISTA (TEXTO->VIDEO) CON FAL KLING V2 MASTER
+    if mode == "fal":
+        if not os.getenv("FAL_KEY"):
             return {"status": "error", "message": "FAL_KEY no está configurada en Render"}
 
+        prompt = (req.text or "").strip()
+        if not prompt:
+            return {"status": "error", "message": "Escribe un prompt para el video"}
+
+        # Kling master solo acepta "5" o "10" como string
+        dur = "10" if int(req.duration) >= 10 else "5"
+
+        # Kling master acepta: 16:9 | 9:16 | 1:1
+        ar = (req.format or "9:16").strip()
+        if ar not in ("16:9", "9:16", "1:1"):
+            ar = "9:16"
+
+        cfg = float(req.cfg) if req.cfg is not None else 0.5
+        if cfg < 0: cfg = 0.0
+        if cfg > 1: cfg = 1.0
+
         try:
-            prompt = (req.text or "").strip()
-            if not prompt:
-                return {"status": "error", "message": "Escribe un prompt para el video"}
-
-            # Prompt cinematográfico extra (para que salga mejor)
-            cinematic = (
-                f"{prompt}. Estilo cine realista, iluminación cinematográfica, "
-                "movimiento natural de cámara, detalle alto, colores naturales."
-            )
-
-            result = fal_client.run(
-                "runwayml/gen2",
+            result = fal_client.subscribe(
+                "fal-ai/kling-video/v2/master/text-to-video",
                 arguments={
-                    "prompt": cinematic,
-                    "seconds": max(1, int(req.duration)),
+                    "prompt": prompt,
+                    "duration": dur,          # "5" o "10"
+                    "aspect_ratio": ar,       # "9:16" etc
+                    "cfg_scale": cfg,         # 0..1
+                    "negative_prompt": "blur, distort, low quality, text, subtitles, watermark",
                 },
             )
-
             video_url = _extract_video_url(result)
             if not video_url:
                 return {"status": "error", "message": "No llegó video_url", "raw": result}
-
-            return {"status": "ok", "provider": "runway", "video_url": video_url, "result": result}
-
+            return {"status": "ok", "provider": "fal-kling-v2-master", "video_url": video_url}
         except Exception as e:
             return {"status": "error", "message": "FAL error", "detail": str(e)}
 
-    # -------- MODO PIKA (si lo quieres)
-    if mode == "pika":
-        if not fal_client.api_key:
-            return {"status": "error", "message": "FAL_KEY no está configurada en Render"}
-        try:
-            result = fal_client.run(
-                "pika/video",
-                arguments={
-                    "prompt": req.text,
-                    "seconds": max(1, int(req.duration)),
-                },
-            )
-            video_url = _extract_video_url(result)
-            return {"status": "ok", "provider": "pika", "video_url": video_url, "result": result}
-        except Exception as e:
-            return {"status": "error", "message": "FAL error", "detail": str(e)}
+    # (Opcionales) si en tu UI te aparece runway/pika, aquí lo bloqueamos para evitar errores raros:
+    if mode in ("runway", "pika"):
+        return {
+            "status": "error",
+            "message": "Este modo está desactivado por ahora. Usa modo 'fal' (Kling) que es el estable.",
+        }
 
-    return {"status": "error", "message": "Modo de video no válido. Usa: reels | cine | runway | pika"}
+    return {"status": "error", "message": "Modo de video no válido. Usa: reels | fal"}
