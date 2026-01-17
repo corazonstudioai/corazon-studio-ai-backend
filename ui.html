@@ -5,66 +5,247 @@
   <title>Corazón Studio AI ✨</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
-    body {
-      background: #0b1020;
-      color: white;
+    :root{
+      --bg:#0b1020;
+      --card: rgba(255,255,255,.07);
+      --card2: rgba(255,255,255,.05);
+      --txt:#fff;
+      --muted: rgba(255,255,255,.65);
+      --btn1:#3b82f6;
+      --btn2:#7c3aed;
+      --radius:18px;
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0;
       font-family: Arial, sans-serif;
-      padding: 16px;
+      background: radial-gradient(1200px 600px at 50% -10%, rgba(124,58,237,.35), transparent 60%),
+                  radial-gradient(900px 500px at 20% 0%, rgba(59,130,246,.28), transparent 60%),
+                  var(--bg);
+      color:var(--txt);
+      padding:16px;
     }
-    h1 {
-      text-align: center;
+    .wrap{max-width:720px;margin:0 auto}
+    h1{
+      text-align:center;margin:10px 0 4px;font-size:40px;letter-spacing:.2px
     }
-    textarea, select, button {
-      width: 100%;
-      margin-top: 10px;
-      padding: 10px;
-      border-radius: 8px;
-      border: none;
+    .sub{ text-align:center;color:var(--muted); margin:0 0 18px; }
+    .card{
+      background: var(--card);
+      border: 1px solid rgba(255,255,255,.10);
+      border-radius: var(--radius);
+      padding:16px;
+      margin: 14px 0;
+      box-shadow: 0 10px 30px rgba(0,0,0,.25);
     }
-    button {
-      background: linear-gradient(90deg,#6a5cff,#8f6bff);
-      color: white;
+    .title{
+      display:flex; gap:10px; align-items:center;
+      font-size:22px; font-weight:700; margin:0 0 10px;
+    }
+    textarea,input,select,button{
+      width:100%;
+      border-radius: 14px;
+      border: 1px solid rgba(255,255,255,.12);
+      background: var(--card2);
+      color: var(--txt);
+      padding: 12px 12px;
       font-size: 16px;
+      outline:none;
     }
-    video {
-      width: 100%;
-      margin-top: 15px;
-      border-radius: 12px;
+    textarea{min-height:92px; resize:vertical}
+    .row{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+    .row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:10px}
+    button{
+      border:none;
+      padding: 14px 12px;
+      font-weight: 700;
+      cursor:pointer;
+      background: linear-gradient(90deg,var(--btn1),var(--btn2));
     }
+    button.secondary{
+      background: linear-gradient(90deg, rgba(59,130,246,.65), rgba(124,58,237,.65));
+    }
+    .out{
+      margin-top:10px;
+      padding:12px;
+      border-radius:14px;
+      background: rgba(0,0,0,.20);
+      border: 1px solid rgba(255,255,255,.08);
+      color: rgba(255,255,255,.92);
+      white-space: pre-wrap;
+    }
+    img,video,audio{
+      width:100%;
+      border-radius: var(--radius);
+      margin-top:10px;
+      background:#000;
+    }
+    .hint{color:var(--muted);font-size:14px;margin-top:8px}
+    .ok{color:#86efac;font-weight:700}
+    .err{color:#fca5a5;font-weight:700}
   </style>
 </head>
 <body>
+<div class="wrap">
+  <h1>💜 Corazón Studio AI</h1>
+  <p class="sub">Chat, imágenes, reels y video cine realista (texto → video).</p>
 
-<h1>💜 Corazón Studio AI</h1>
+  <!-- CHAT -->
+  <div class="card">
+    <div class="title">💬 Chat</div>
+    <textarea id="chat_in" placeholder="Escribe tu mensaje..."></textarea>
+    <button class="secondary" onclick="doChat()">Enviar</button>
+    <div id="chat_out" class="out"></div>
+    <div class="hint">Tip: si no responde, revisa que el backend esté activo.</div>
+  </div>
 
-<h3>🎬 Video cine realista</h3>
-<textarea id="prompt" rows="4" placeholder="Describe el video..."></textarea>
+  <!-- IMAGEN -->
+  <div class="card">
+    <div class="title">🖼️ Imagen</div>
+    <textarea id="img_in" placeholder="Describe la imagen..."></textarea>
+    <div class="row">
+      <select id="img_size">
+        <option value="1024x1024">1024x1024</option>
+        <option value="1024x1536">1024x1536</option>
+        <option value="1536x1024">1536x1024</option>
+      </select>
+      <button onclick="doImage()">Generar</button>
+    </div>
+    <div id="img_out" class="out"></div>
+    <img id="img_preview" style="display:none" />
+  </div>
 
-<button onclick="generar()">Generar Video</button>
+  <!-- REELS (LOCAL) -->
+  <div class="card">
+    <div class="title">🎞️ Reels MP4 (local)</div>
+    <textarea id="reels_in" placeholder="Texto para el reels..."></textarea>
+    <div class="row">
+      <input id="reels_dur" type="number" min="1" max="60" value="6" />
+      <select id="reels_fmt">
+        <option value="9:16">9:16</option>
+        <option value="1:1">1:1</option>
+        <option value="16:9">16:9</option>
+      </select>
+    </div>
+    <button onclick="doReels()">Crear Reels (descargar MP4)</button>
+    <div id="reels_out" class="out"></div>
+    <video id="reels_preview" controls style="display:none"></video>
+  </div>
 
-<video id="video" controls></video>
+  <!-- VIDEO CINE -->
+  <div class="card">
+    <div class="title">🎬 Video cine realista (texto → video)</div>
+    <textarea id="cine_in" placeholder="Ej: Una niña sonriente caminando en un parque al atardecer, estilo cinematográfico, realista, cámara suave..."></textarea>
+    <div class="row3">
+      <select id="cine_dur">
+        <option value="5">5s</option>
+        <option value="6">6s</option>
+        <option value="8">8s</option>
+        <option value="10">10s</option>
+      </select>
+      <select id="cine_fmt">
+        <option value="9:16">9:16</option>
+        <option value="16:9">16:9</option>
+        <option value="1:1">1:1</option>
+      </select>
+      <input id="cine_cfg" type="number" step="0.1" value="0.5" />
+    </div>
+    <button onclick="doCine()">Generar Video</button>
+    <div id="cine_out" class="out"></div>
+    <video id="cine_preview" controls style="display:none"></video>
+  </div>
+</div>
 
 <script>
-async function generar() {
-  const prompt = document.getElementById("prompt").value;
-
-  const res = await fetch("/video-cine", {
-    method: "POST",
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({
-      text: prompt,
-      duration: 5
-    })
-  });
-
-  const data = await res.json();
-  if (data.video_url) {
-    document.getElementById("video").src = data.video_url;
-  } else {
-    alert("Error generando video");
+  async function postJSON(path, payload){
+    const r = await fetch(path, {
+      method:"POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify(payload)
+    });
+    const data = await r.json().catch(()=>null);
+    return {ok: r.ok, data};
   }
-}
-</script>
 
+  // CHAT
+  async function doChat(){
+    const msg = document.getElementById("chat_in").value.trim();
+    const out = document.getElementById("chat_out");
+    out.textContent = "Enviando...";
+    const {ok, data} = await postJSON("/chat", {message: msg});
+    if(!ok){ out.innerHTML = `<span class="err">Error:</span> ${JSON.stringify(data)}`; return; }
+    out.textContent = data.reply || "(sin respuesta)";
+  }
+
+  // IMAGEN
+  async function doImage(){
+    const prompt = document.getElementById("img_in").value.trim();
+    const size = document.getElementById("img_size").value;
+    const out = document.getElementById("img_out");
+    const img = document.getElementById("img_preview");
+    img.style.display="none";
+    out.textContent="Generando...";
+    const {ok, data} = await postJSON("/image", {prompt, size});
+    if(!ok){ out.innerHTML = `<span class="err">Error:</span> ${JSON.stringify(data)}`; return; }
+
+    if(data.image_url){
+      out.innerHTML = `<span class="ok">Imagen lista ✅</span>`;
+      img.src = data.image_url;
+      img.style.display="block";
+    }else{
+      out.innerHTML = `<span class="ok">Respuesta ✅</span>\n${JSON.stringify(data, null, 2)}`;
+    }
+  }
+
+  // REELS
+  async function doReels(){
+    const text = document.getElementById("reels_in").value.trim();
+    const duration = parseInt(document.getElementById("reels_dur").value || "6");
+    const format = document.getElementById("reels_fmt").value;
+    const out = document.getElementById("reels_out");
+    const vid = document.getElementById("reels_preview");
+    vid.style.display="none";
+    out.textContent="Creando MP4...";
+    const r = await fetch("/reels", {
+      method:"POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({text, duration, format, cfg: 0.5})
+    });
+    if(!r.ok){
+      const data = await r.json().catch(()=>null);
+      out.innerHTML = `<span class="err">Error:</span> ${JSON.stringify(data)}`;
+      return;
+    }
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    vid.src = url;
+    vid.style.display="block";
+    out.innerHTML = `<span class="ok">Reels listo ✅</span>`;
+  }
+
+  // VIDEO CINE
+  async function doCine(){
+    const text = document.getElementById("cine_in").value.trim();
+    const duration = parseInt(document.getElementById("cine_dur").value || "5");
+    const format = document.getElementById("cine_fmt").value;
+    const cfg = parseFloat(document.getElementById("cine_cfg").value || "0.5");
+    const out = document.getElementById("cine_out");
+    const vid = document.getElementById("cine_preview");
+    vid.style.display="none";
+    out.textContent="Generando video...";
+    const {ok, data} = await postJSON("/video-cine", {text, duration, format, cfg});
+    if(!ok || !data){
+      out.innerHTML = `<span class="err">Error:</span> ${JSON.stringify(data)}`;
+      return;
+    }
+    if(data.status !== "ok"){
+      out.innerHTML = `<span class="err">Error:</span> ${JSON.stringify(data)}`;
+      return;
+    }
+    out.innerHTML = `<span class="ok">Video listo ✅</span>`;
+    vid.src = data.video_url;
+    vid.style.display="block";
+  }
+</script>
 </body>
 </html>
