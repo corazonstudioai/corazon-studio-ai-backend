@@ -399,3 +399,105 @@ def video_cine(req: VideoRequest):
         return {"status": "ok", "video_url": url}
     except Exception as e:
         return {"status": "error", "message": str(e)}
+        # =========================
+# VIDEO CINE + VOZ + MUSICA (NUEVO)
+# =========================
+from typing import Literal
+
+class CineVoiceRequest(BaseModel):
+    text: str
+    duration: int = 5
+    format: str = "9:16"
+    cfg: float = 0.5
+
+    language: Literal["es", "en"] = "es"
+    mode: Literal["narrator_only", "narrator_plus_character"] = "narrator_only"
+    voice_gender: Literal["female", "male"] = "female"
+    music: Literal["none", "soft", "cinematic"] = "soft"
+
+
+async def download_to_file(url: str, out_path: Path) -> None:
+    async with httpx.AsyncClient(timeout=180) as client:
+        r = await client.get(url)
+        r.raise_for_status()
+        out_path.write_bytes(r.content)
+
+
+def build_tts_text(text: str, language: str, mode: str) -> tuple[str, str]:
+    """
+    Devuelve (tts_text, instructions)
+    """
+    if mode == "narrator_plus_character":
+        if language == "es":
+            tts_text = f"Narrador: {text}\n\nPersonaje: ¡Wow! Eso se ve increíble."
+            instr = "Habla en español latino neutro. Voz cálida, clara, estilo narrador de cuento."
+        else:
+            tts_text = f"Narrator: {text}\n\nCharacter: Wow! That looks amazing."
+            instr = "Speak in clear English. Warm storyteller narrator style."
+    else:
+        tts_text = text
+        instr = "Habla en español latino neutro. Voz cálida y natural." if language == "es" else "Clear English, warm and natural pacing."
+    return tts_text, instr
+
+
+@app.post("/video-cine-voice")
+async def video_cine_voice(req: CineVoiceRequest):
+    if not os.getenv("FAL_KEY"):
+        return {"status": "error", "message": "FAL_KEY no configurada"}
+    if not OPENAI_API_KEY:
+        return {"status": "error", "message": "OPENAI_API_KEY no configurada"}
+
+    try:
+        # 1) Generar cine con el MISMO modelo que ya te funciona.
+        # Si ya tienes variable OPENAI_VIDEO_MODEL o algo similar, NO la toco.
+        # Aquí usa tu modelo actual (ajústalo si tu main.py usa otro ID).
+        result = fal_client.run(
+            os.getenv("VIDEO_MODEL_CINE", "fal-ai/wan-v2.1/14b/image-to-video"),
+            arguments={
+                "prompt": req.text,
+                "duration": req.duration,
+            },
+        )
+
+        # 2) sacar URL del video
+        video_url = None
+        if isinstance(result, dict):
+            if result.get("video") and isinstance(result["video"], dict):
+                video_url = result["video"].get("url")
+            if not video_url and result.get("videos"):
+                video_url = result["videos"][0].get("url")
+
+        if not video_url:
+            return {"status": "error", "message": "No se obtuvo video_url", "raw": result}
+
+        # 3) descargar video a /tmp/out
+        base_name = f"cine_{uuid.uuid4().hex}.mp4"
+        base_path = file_path(base_name)
+        await download_to_file(video_url, base_path)
+
+        # 4) generar voz
+        voice = choose_voice(req.language, req.voice_gender)
+        tts_text, instr = build_tts_text(req.text, req.language, req.mode)
+
+        voice_name = safe_filename("mp3")
+        voice_path = file_path(voice_name)
+        await openai_tts_to_file(
+            tts_text,
+            voice=voice,
+            out_path=voice_path,
+            response_format="mp3",
+            instructions=instr
+        )
+
+        # 5) música
+        music_path = choose_music_path(req.music)
+
+        # 6) mux final
+        out_name = f"cine_voice_{uuid.uuid4().hex}.mp4"
+        out_path = file_path(out_name)
+        mux_video_audio(base_path, voice_path, music_path, out_path)
+
+        return {"status": "ok", "video_url": f"/files/{out_name}"}
+
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
