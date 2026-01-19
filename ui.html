@@ -7,245 +7,528 @@
   <style>
     :root{
       --bg:#0b1020;
-      --card: rgba(255,255,255,.07);
-      --card2: rgba(255,255,255,.05);
-      --txt:#fff;
-      --muted: rgba(255,255,255,.65);
-      --btn1:#3b82f6;
-      --btn2:#7c3aed;
-      --radius:18px;
+      --card:#121a33;
+      --card2:#0f1630;
+      --text:#ffffff;
+      --muted:rgba(255,255,255,.7);
+      --accent:#6c5cff;
+      --accent2:#8f86ff;
+      --stroke:rgba(255,255,255,.12);
+      --shadow: 0 16px 40px rgba(0,0,0,.35);
+      --radius: 18px;
     }
-    *{box-sizing:border-box}
     body{
-      margin:0;
+      margin:0; padding:18px;
       font-family: Arial, sans-serif;
-      background: radial-gradient(1200px 600px at 50% -10%, rgba(124,58,237,.35), transparent 60%),
-                  radial-gradient(900px 500px at 20% 0%, rgba(59,130,246,.28), transparent 60%),
+      background: radial-gradient(1200px 800px at 20% 0%, rgba(108,92,255,.25), transparent 60%),
+                  radial-gradient(900px 700px at 90% 20%, rgba(143,134,255,.18), transparent 55%),
                   var(--bg);
-      color:var(--txt);
-      padding:16px;
+      color:var(--text);
     }
-    .wrap{max-width:720px;margin:0 auto}
-    h1{
-      text-align:center;margin:10px 0 4px;font-size:40px;letter-spacing:.2px
-    }
-    .sub{ text-align:center;color:var(--muted); margin:0 0 18px; }
-    .card{
-      background: var(--card);
-      border: 1px solid rgba(255,255,255,.10);
-      border-radius: var(--radius);
-      padding:16px;
-      margin: 14px 0;
-      box-shadow: 0 10px 30px rgba(0,0,0,.25);
-    }
+    .wrap{max-width:720px; margin:0 auto;}
     .title{
-      display:flex; gap:10px; align-items:center;
-      font-size:22px; font-weight:700; margin:0 0 10px;
+      display:flex; align-items:center; gap:10px;
+      font-size:34px; font-weight:800;
+      margin:8px 0 14px;
     }
-    textarea,input,select,button{
+    .tabs{
+      display:flex; gap:10px; flex-wrap:wrap;
+      background: rgba(255,255,255,.06);
+      border:1px solid var(--stroke);
+      padding:10px;
+      border-radius: 999px;
+      box-shadow: var(--shadow);
+      margin-bottom:14px;
+    }
+    .tab{
+      border:0; cursor:pointer;
+      padding:10px 14px;
+      border-radius:999px;
+      background:transparent;
+      color:var(--muted);
+      font-weight:700;
+    }
+    .tab.active{
+      background: linear-gradient(90deg, var(--accent), var(--accent2));
+      color:white;
+    }
+    .card{
+      background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.03));
+      border:1px solid var(--stroke);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding:16px;
+      margin-bottom:14px;
+    }
+    .h2{font-size:20px; font-weight:800; margin:0 0 12px;}
+    textarea, input, select{
       width:100%;
-      border-radius: 14px;
-      border: 1px solid rgba(255,255,255,.12);
-      background: var(--card2);
-      color: var(--txt);
-      padding: 12px 12px;
-      font-size: 16px;
-      outline:none;
-    }
-    textarea{min-height:92px; resize:vertical}
-    .row{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
-    .row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:10px}
-    button{
-      border:none;
-      padding: 14px 12px;
-      font-weight: 700;
-      cursor:pointer;
-      background: linear-gradient(90deg,var(--btn1),var(--btn2));
-    }
-    button.secondary{
-      background: linear-gradient(90deg, rgba(59,130,246,.65), rgba(124,58,237,.65));
-    }
-    .out{
-      margin-top:10px;
       padding:12px;
       border-radius:14px;
-      background: rgba(0,0,0,.20);
-      border: 1px solid rgba(255,255,255,.08);
-      color: rgba(255,255,255,.92);
-      white-space: pre-wrap;
+      border:1px solid var(--stroke);
+      background: rgba(0,0,0,.22);
+      color: var(--text);
+      outline:none;
+      font-size:16px;
+      box-sizing:border-box;
     }
-    img,video,audio{
+    textarea{min-height:110px; resize:vertical;}
+    .grid2{display:grid; grid-template-columns:1fr 1fr; gap:10px;}
+    .grid3{display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px;}
+    .btn{
       width:100%;
-      border-radius: var(--radius);
+      border:0;
+      padding:14px 16px;
+      font-size:16px;
+      font-weight:800;
+      color:white;
+      border-radius: 14px;
+      cursor:pointer;
+      background: linear-gradient(90deg, var(--accent), var(--accent2));
       margin-top:10px;
-      background:#000;
     }
-    .hint{color:var(--muted);font-size:14px;margin-top:8px}
-    .ok{color:#86efac;font-weight:700}
-    .err{color:#fca5a5;font-weight:700}
+    .btn.secondary{
+      background: rgba(255,255,255,.08);
+      border:1px solid var(--stroke);
+      color: white;
+    }
+    .row{display:flex; gap:10px; align-items:center;}
+    .small{font-size:13px; color:var(--muted); margin-top:8px;}
+    video, img, audio{
+      width:100%;
+      border-radius: 16px;
+      margin-top:12px;
+      background: rgba(0,0,0,.25);
+      border:1px solid var(--stroke);
+    }
+
+    /* Switch premium */
+    .switchRow{
+      display:flex; align-items:center; justify-content:space-between;
+      padding:12px 12px;
+      border-radius: 14px;
+      border:1px solid var(--stroke);
+      background: rgba(0,0,0,.18);
+      margin-top:10px;
+    }
+    .switchRow .label{
+      font-weight:800;
+    }
+    .switchRow .sub{
+      font-size:12px; color:var(--muted); margin-top:4px;
+      font-weight:600;
+    }
+    .switch{
+      position: relative;
+      width:52px; height:30px;
+    }
+    .switch input{display:none;}
+    .slider{
+      position:absolute; inset:0;
+      background: rgba(255,255,255,.18);
+      border:1px solid var(--stroke);
+      border-radius:999px;
+      transition:.2s;
+    }
+    .slider:before{
+      content:"";
+      position:absolute; width:24px; height:24px;
+      left:3px; top:2.5px;
+      background:white;
+      border-radius:50%;
+      transition:.2s;
+    }
+    .switch input:checked + .slider{
+      background: linear-gradient(90deg, var(--accent), var(--accent2));
+    }
+    .switch input:checked + .slider:before{
+      transform: translateX(21px);
+    }
+
+    .presetBar{
+      display:flex; gap:10px; align-items:center;
+      margin-top:12px;
+    }
+    .presetBar select{flex:1;}
+    .presetBar button{flex:0 0 auto; padding:12px 14px; border-radius:14px;}
+    .hide{display:none;}
   </style>
 </head>
+
 <body>
 <div class="wrap">
-  <h1>💜 Corazón Studio AI</h1>
-  <p class="sub">Chat, imágenes, reels y video cine realista (texto → video).</p>
+  <div class="title">💜 Corazón Studio AI</div>
+
+  <div class="tabs">
+    <button class="tab active" id="tabCine" onclick="showTab('cine')">🎬 Cine</button>
+    <button class="tab" id="tabReels" onclick="showTab('reels')">📱 Reels</button>
+    <button class="tab" id="tabImage" onclick="showTab('image')">🖼️ Imagen</button>
+    <button class="tab" id="tabChat" onclick="showTab('chat')">💬 Chat</button>
+  </div>
+
+  <!-- PRESETS -->
+  <div class="card">
+    <div class="h2">⭐ Presets (Reels / Cine)</div>
+    <div class="presetBar">
+      <select id="presetSelect"></select>
+      <button class="btn secondary" onclick="savePreset()">Guardar</button>
+      <button class="btn secondary" onclick="deletePreset()">Borrar</button>
+    </div>
+    <div class="small">Tip: Crea un preset “Reels ES Voz F + Música suave” y otro “Cine EN Voz M + Cinematic”.</div>
+  </div>
+
+  <!-- CINE -->
+  <div class="card" id="panelCine">
+    <div class="h2">🎬 Video Cine (con Voz + Música)</div>
+
+    <textarea id="cineText" placeholder="Describe el video cine..."></textarea>
+
+    <div class="grid2" style="margin-top:10px">
+      <div>
+        <label>🌎 Idioma</label>
+        <select id="cineLanguage">
+          <option value="es">Español</option>
+          <option value="en">English</option>
+        </select>
+      </div>
+      <div>
+        <label>🎙️ Voz</label>
+        <select id="cineGender">
+          <option value="female">Femenina</option>
+          <option value="male">Masculina</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="grid2" style="margin-top:10px">
+      <div>
+        <label>⏱️ Duración</label>
+        <select id="cineDuration">
+          <option value="5">5s</option>
+          <option value="6">6s</option>
+          <option value="8">8s</option>
+        </select>
+      </div>
+      <div>
+        <label>🎶 Música</label>
+        <select id="cineMusic">
+          <option value="soft">Suave</option>
+          <option value="cinematic">Cinemática</option>
+          <option value="none">Sin música</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="switchRow">
+      <div>
+        <div class="label">🗣️ Narrador + Personajes</div>
+        <div class="sub">Apaga = solo narrador</div>
+      </div>
+      <label class="switch">
+        <input type="checkbox" id="cineCharacters" />
+        <span class="slider"></span>
+      </label>
+    </div>
+
+    <button class="btn" onclick="generateCine()">Generar Cine con Voz</button>
+
+    <video id="cineVideo" controls playsinline></video>
+    <div class="small" id="cineStatus"></div>
+  </div>
+
+  <!-- REELS -->
+  <div class="card hide" id="panelReels">
+    <div class="h2">📱 Reels (con Voz + Música)</div>
+
+    <textarea id="reelsText" placeholder="Texto del reels..."></textarea>
+
+    <div class="grid2" style="margin-top:10px">
+      <div>
+        <label>🌎 Idioma</label>
+        <select id="reelsLanguage">
+          <option value="es">Español</option>
+          <option value="en">English</option>
+        </select>
+      </div>
+      <div>
+        <label>🎙️ Voz</label>
+        <select id="reelsGender">
+          <option value="female">Femenina</option>
+          <option value="male">Masculina</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="grid2" style="margin-top:10px">
+      <div>
+        <label>⏱️ Duración</label>
+        <select id="reelsDuration">
+          <option value="6">6s</option>
+          <option value="8">8s</option>
+          <option value="10">10s</option>
+        </select>
+      </div>
+      <div>
+        <label>🎶 Música</label>
+        <select id="reelsMusic">
+          <option value="soft">Suave</option>
+          <option value="cinematic">Cinemática</option>
+          <option value="none">Sin música</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="switchRow">
+      <div>
+        <div class="label">🗣️ Narrador + Personajes</div>
+        <div class="sub">Apaga = solo narrador</div>
+      </div>
+      <label class="switch">
+        <input type="checkbox" id="reelsCharacters" />
+        <span class="slider"></span>
+      </label>
+    </div>
+
+    <button class="btn" onclick="generateReels()">Generar Reels con Voz</button>
+
+    <video id="reelsVideo" controls playsinline></video>
+    <div class="small" id="reelsStatus"></div>
+  </div>
+
+  <!-- IMAGE -->
+  <div class="card hide" id="panelImage">
+    <div class="h2">🖼️ Imagen</div>
+    <textarea id="imgPrompt" placeholder="Describe la imagen..."></textarea>
+    <button class="btn" onclick="generateImage()">Generar Imagen</button>
+    <img id="imgOut" />
+    <div class="small" id="imgStatus"></div>
+  </div>
 
   <!-- CHAT -->
-  <div class="card">
-    <div class="title">💬 Chat</div>
-    <textarea id="chat_in" placeholder="Escribe tu mensaje..."></textarea>
-    <button class="secondary" onclick="doChat()">Enviar</button>
-    <div id="chat_out" class="out"></div>
-    <div class="hint">Tip: si no responde, revisa que el backend esté activo.</div>
+  <div class="card hide" id="panelChat">
+    <div class="h2">💬 Chat</div>
+    <textarea id="chatMsg" placeholder="Escribe tu mensaje..."></textarea>
+    <button class="btn" onclick="sendChat()">Enviar</button>
+    <div class="card" style="background:rgba(0,0,0,.18); margin-top:12px">
+      <div class="h2" style="margin-bottom:8px">Respuesta</div>
+      <div id="chatOut" style="white-space:pre-wrap; color:var(--muted)"></div>
+    </div>
   </div>
 
-  <!-- IMAGEN -->
-  <div class="card">
-    <div class="title">🖼️ Imagen</div>
-    <textarea id="img_in" placeholder="Describe la imagen..."></textarea>
-    <div class="row">
-      <select id="img_size">
-        <option value="1024x1024">1024x1024</option>
-        <option value="1024x1536">1024x1536</option>
-        <option value="1536x1024">1536x1024</option>
-      </select>
-      <button onclick="doImage()">Generar</button>
-    </div>
-    <div id="img_out" class="out"></div>
-    <img id="img_preview" style="display:none" />
-  </div>
-
-  <!-- REELS (LOCAL) -->
-  <div class="card">
-    <div class="title">🎞️ Reels MP4 (local)</div>
-    <textarea id="reels_in" placeholder="Texto para el reels..."></textarea>
-    <div class="row">
-      <input id="reels_dur" type="number" min="1" max="60" value="6" />
-      <select id="reels_fmt">
-        <option value="9:16">9:16</option>
-        <option value="1:1">1:1</option>
-        <option value="16:9">16:9</option>
-      </select>
-    </div>
-    <button onclick="doReels()">Crear Reels (descargar MP4)</button>
-    <div id="reels_out" class="out"></div>
-    <video id="reels_preview" controls style="display:none"></video>
-  </div>
-
-  <!-- VIDEO CINE -->
-  <div class="card">
-    <div class="title">🎬 Video cine realista (texto → video)</div>
-    <textarea id="cine_in" placeholder="Ej: Una niña sonriente caminando en un parque al atardecer, estilo cinematográfico, realista, cámara suave..."></textarea>
-    <div class="row3">
-      <select id="cine_dur">
-        <option value="5">5s</option>
-        <option value="6">6s</option>
-        <option value="8">8s</option>
-        <option value="10">10s</option>
-      </select>
-      <select id="cine_fmt">
-        <option value="9:16">9:16</option>
-        <option value="16:9">16:9</option>
-        <option value="1:1">1:1</option>
-      </select>
-      <input id="cine_cfg" type="number" step="0.1" value="0.5" />
-    </div>
-    <button onclick="doCine()">Generar Video</button>
-    <div id="cine_out" class="out"></div>
-    <video id="cine_preview" controls style="display:none"></video>
-  </div>
 </div>
 
 <script>
-  async function postJSON(path, payload){
-    const r = await fetch(path, {
+  // -----------------------
+  // Tabs
+  // -----------------------
+  function showTab(name){
+    const map = {
+      cine: ["panelCine","tabCine"],
+      reels:["panelReels","tabReels"],
+      image:["panelImage","tabImage"],
+      chat: ["panelChat","tabChat"],
+    };
+    for(const k in map){
+      document.getElementById(map[k][0]).classList.add("hide");
+      document.getElementById(map[k][1]).classList.remove("active");
+    }
+    document.getElementById(map[name][0]).classList.remove("hide");
+    document.getElementById(map[name][1]).classList.add("active");
+    applyPresetToUI();
+  }
+
+  // -----------------------
+  // Presets
+  // -----------------------
+  const PRESET_KEY = "corazon_presets_v1";
+
+  function getPresets(){
+    try { return JSON.parse(localStorage.getItem(PRESET_KEY) || "[]"); }
+    catch(e){ return []; }
+  }
+
+  function setPresets(list){
+    localStorage.setItem(PRESET_KEY, JSON.stringify(list));
+  }
+
+  function refreshPresetSelect(){
+    const sel = document.getElementById("presetSelect");
+    const list = getPresets();
+    if(list.length === 0){
+      sel.innerHTML = `<option value="">(sin presets)</option>`;
+      return;
+    }
+    sel.innerHTML = list.map((p,i)=>`<option value="${i}">${p.name}</option>`).join("");
+  }
+
+  function currentUIState(){
+    return {
+      cine: {
+        language: cineLanguage.value,
+        gender: cineGender.value,
+        duration: cineDuration.value,
+        music: cineMusic.value,
+        characters: cineCharacters.checked
+      },
+      reels: {
+        language: reelsLanguage.value,
+        gender: reelsGender.value,
+        duration: reelsDuration.value,
+        music: reelsMusic.value,
+        characters: reelsCharacters.checked
+      }
+    };
+  }
+
+  function applyState(state){
+    if(!state) return;
+
+    if(state.cine){
+      cineLanguage.value = state.cine.language || "es";
+      cineGender.value = state.cine.gender || "female";
+      cineDuration.value = state.cine.duration || "5";
+      cineMusic.value = state.cine.music || "soft";
+      cineCharacters.checked = !!state.cine.characters;
+    }
+    if(state.reels){
+      reelsLanguage.value = state.reels.language || "es";
+      reelsGender.value = state.reels.gender || "female";
+      reelsDuration.value = state.reels.duration || "6";
+      reelsMusic.value = state.reels.music || "soft";
+      reelsCharacters.checked = !!state.reels.characters;
+    }
+  }
+
+  function savePreset(){
+    const name = prompt("Nombre del preset (ej: Reels ES Voz F Soft):");
+    if(!name) return;
+
+    const list = getPresets();
+    list.unshift({ name, state: currentUIState() });
+    setPresets(list.slice(0, 30)); // máximo 30
+    refreshPresetSelect();
+    presetSelect.value = "0";
+  }
+
+  function deletePreset(){
+    const idx = presetSelect.value;
+    if(idx === "" || idx == null) return;
+    const list = getPresets();
+    if(!list[idx]) return;
+    if(!confirm(`Borrar preset "${list[idx].name}"?`)) return;
+    list.splice(idx,1);
+    setPresets(list);
+    refreshPresetSelect();
+  }
+
+  function applyPresetToUI(){
+    const idx = presetSelect.value;
+    if(idx === "" || idx == null) return;
+    const list = getPresets();
+    const preset = list[idx];
+    if(preset && preset.state) applyState(preset.state);
+  }
+
+  document.addEventListener("change", (e)=>{
+    if(e.target && e.target.id === "presetSelect"){
+      applyPresetToUI();
+    }
+  });
+
+  refreshPresetSelect();
+
+  // -----------------------
+  // API calls
+  // -----------------------
+  async function generateReels(){
+    reelsStatus.textContent = "Generando reels con voz...";
+    const body = {
+      text: reelsText.value,
+      duration: parseInt(reelsDuration.value, 10),
+      format: "9:16",
+      language: reelsLanguage.value,
+      voice_gender: reelsGender.value,
+      mode: reelsCharacters.checked ? "narrator_plus_character" : "narrator_only",
+      music: reelsMusic.value
+    };
+
+    const res = await fetch("/reels-voice", {
       method:"POST",
-      headers: {"Content-Type":"application/json"},
-      body: JSON.stringify(payload)
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify(body)
     });
-    const data = await r.json().catch(()=>null);
-    return {ok: r.ok, data};
+
+    const data = await res.json();
+    if(data.video_url){
+      reelsVideo.src = data.video_url;
+      reelsVideo.load();
+      reelsVideo.play();
+      reelsStatus.textContent = "✅ Reels listo";
+    } else {
+      reelsStatus.textContent = "❌ Error: " + (data.message || "no se pudo generar");
+      alert(reelsStatus.textContent);
+    }
   }
 
-  // CHAT
-  async function doChat(){
-    const msg = document.getElementById("chat_in").value.trim();
-    const out = document.getElementById("chat_out");
-    out.textContent = "Enviando...";
-    const {ok, data} = await postJSON("/chat", {message: msg});
-    if(!ok){ out.innerHTML = `<span class="err">Error:</span> ${JSON.stringify(data)}`; return; }
-    out.textContent = data.reply || "(sin respuesta)";
+  async function generateCine(){
+    cineStatus.textContent = "Generando cine con voz...";
+    const body = {
+      text: cineText.value,
+      duration: parseInt(cineDuration.value, 10),
+      format: "9:16",
+      language: cineLanguage.value,
+      voice_gender: cineGender.value,
+      mode: cineCharacters.checked ? "narrator_plus_character" : "narrator_only",
+      music: cineMusic.value
+    };
+
+    // Usa el nuevo endpoint
+    const res = await fetch("/video-cine-voice", {
+      method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify(body)
+    });
+
+    const data = await res.json();
+    if(data.video_url){
+      cineVideo.src = data.video_url;
+      cineVideo.load();
+      cineVideo.play();
+      cineStatus.textContent = "✅ Cine listo";
+    } else {
+      cineStatus.textContent = "❌ Error: " + (data.message || "no se pudo generar");
+      alert(cineStatus.textContent);
+    }
   }
 
-  // IMAGEN
-  async function doImage(){
-    const prompt = document.getElementById("img_in").value.trim();
-    const size = document.getElementById("img_size").value;
-    const out = document.getElementById("img_out");
-    const img = document.getElementById("img_preview");
-    img.style.display="none";
-    out.textContent="Generando...";
-    const {ok, data} = await postJSON("/image", {prompt, size});
-    if(!ok){ out.innerHTML = `<span class="err">Error:</span> ${JSON.stringify(data)}`; return; }
-
+  async function generateImage(){
+    imgStatus.textContent = "Generando imagen...";
+    const res = await fetch("/image", {
+      method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ prompt: imgPrompt.value, size: "1024x1024" })
+    });
+    const data = await res.json();
     if(data.image_url){
-      out.innerHTML = `<span class="ok">Imagen lista ✅</span>`;
-      img.src = data.image_url;
-      img.style.display="block";
-    }else{
-      out.innerHTML = `<span class="ok">Respuesta ✅</span>\n${JSON.stringify(data, null, 2)}`;
+      imgOut.src = data.image_url;
+      imgStatus.textContent = "✅ Imagen lista";
+    } else {
+      imgStatus.textContent = "❌ Error";
+      alert(JSON.stringify(data));
     }
   }
 
-  // REELS
-  async function doReels(){
-    const text = document.getElementById("reels_in").value.trim();
-    const duration = parseInt(document.getElementById("reels_dur").value || "6");
-    const format = document.getElementById("reels_fmt").value;
-    const out = document.getElementById("reels_out");
-    const vid = document.getElementById("reels_preview");
-    vid.style.display="none";
-    out.textContent="Creando MP4...";
-    const r = await fetch("/reels", {
+  async function sendChat(){
+    chatOut.textContent = "Escribiendo...";
+    const res = await fetch("/chat", {
       method:"POST",
-      headers: {"Content-Type":"application/json"},
-      body: JSON.stringify({text, duration, format, cfg: 0.5})
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ message: chatMsg.value })
     });
-    if(!r.ok){
-      const data = await r.json().catch(()=>null);
-      out.innerHTML = `<span class="err">Error:</span> ${JSON.stringify(data)}`;
-      return;
-    }
-    const blob = await r.blob();
-    const url = URL.createObjectURL(blob);
-    vid.src = url;
-    vid.style.display="block";
-    out.innerHTML = `<span class="ok">Reels listo ✅</span>`;
-  }
-
-  // VIDEO CINE
-  async function doCine(){
-    const text = document.getElementById("cine_in").value.trim();
-    const duration = parseInt(document.getElementById("cine_dur").value || "5");
-    const format = document.getElementById("cine_fmt").value;
-    const cfg = parseFloat(document.getElementById("cine_cfg").value || "0.5");
-    const out = document.getElementById("cine_out");
-    const vid = document.getElementById("cine_preview");
-    vid.style.display="none";
-    out.textContent="Generando video...";
-    const {ok, data} = await postJSON("/video-cine", {text, duration, format, cfg});
-    if(!ok || !data){
-      out.innerHTML = `<span class="err">Error:</span> ${JSON.stringify(data)}`;
-      return;
-    }
-    if(data.status !== "ok"){
-      out.innerHTML = `<span class="err">Error:</span> ${JSON.stringify(data)}`;
-      return;
-    }
-    out.innerHTML = `<span class="ok">Video listo ✅</span>`;
-    vid.src = data.video_url;
-    vid.style.display="block";
+    const data = await res.json();
+    chatOut.textContent = data.reply || "(sin respuesta)";
   }
 </script>
+
 </body>
 </html>
