@@ -30,15 +30,19 @@ OPENAI_TTS_MODEL = os.getenv("OPENAI_TTS_MODEL", "gpt-4o-mini-tts")
 # FAL
 fal_client.api_key = os.getenv("FAL_KEY")  # debe ser EXACTO: FAL_KEY en Render
 
+# Modelo cine (FAL) - TEXT TO VIDEO
+# Puedes cambiarlo en Render con variable VIDEO_MODEL_CINE
+VIDEO_MODEL_CINE = os.getenv(
+    "VIDEO_MODEL_CINE",
+    "fal-ai/wan/v2.2-a14b/text-to-video/turbo"
+)
+
 # FFmpeg
 FFMPEG_PATH = os.getenv("FFMPEG_PATH", "ffmpeg")
 
 OUT_DIR = Path("/tmp/out")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-# Música de fondo (opcional): agrega estos archivos a tu repo:
-# assets/music_soft.mp3
-# assets/music_cinematic.mp3
 ASSETS_DIR = Path("assets")
 MUSIC_SOFT = ASSETS_DIR / "music_soft.mp3"
 MUSIC_CINEMATIC = ASSETS_DIR / "music_cinematic.mp3"
@@ -103,7 +107,7 @@ class CineVoiceRequest(BaseModel):
 def run_ffmpeg(cmd: list[str]) -> None:
     p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if p.returncode != 0:
-        raise RuntimeError(f"ffmpeg error: {p.stderr[-1500:]}")
+        raise RuntimeError(f"ffmpeg error: {p.stderr[-1600:]}")
 
 def safe_filename(ext: str) -> str:
     return f"{uuid.uuid4().hex}.{ext.lstrip('.')}"
@@ -111,12 +115,10 @@ def safe_filename(ext: str) -> str:
 def file_path(name: str) -> Path:
     return OUT_DIR / name
 
-def absolute_url(req: Request, path: str) -> str:
-    # path debe empezar con "/"
-    base = str(req.base_url).rstrip("/")
-    if not path.startswith("/"):
-        path = "/" + path
-    return base + path
+def absolute_url(request: Request, path: str) -> str:
+    # path: "/files/xxx.mp4"
+    base = str(request.base_url).rstrip("/")
+    return f"{base}{path}"
 
 def make_reels_video(text: str, duration: int, out_path: Path):
     w, h = 720, 1280
@@ -142,7 +144,7 @@ async def openai_tts_to_file(
     out_path: Path,
     speed: float = 1.0,
     response_format: str = "mp3",
-    instructions: Optional[str] = None,
+    instructions: Optional[str] = None
 ):
     if not OPENAI_API_KEY:
         raise RuntimeError("OPENAI_API_KEY no configurada")
@@ -166,65 +168,17 @@ async def openai_tts_to_file(
         r.raise_for_status()
         out_path.write_bytes(r.content)
 
-def pick_voices(language: str, voice_gender: str) -> tuple[str, str]:
-    """
-    (voz_narrador, voz_personaje)
-    Usamos voces distintas para que se note el personaje.
-    """
-    if language == "es":
-        if voice_gender == "male":
-            return ("onyx", "alloy")
-        return ("nova", "shimmer")
-    else:
-        if voice_gender == "male":
-            return ("onyx", "echo")
-        return ("nova", "fable")
+def choose_voice(language: str, voice_gender: str) -> str:
+    # Puedes cambiar después. (funciona bien para ES/EN)
+    if voice_gender == "male":
+        return "onyx"
+    return "nova"
 
-async def tts_narrator_and_character(
-    language: str,
-    mode: str,
-    voice_gender: str,
-    text: str,
-) -> tuple[Path, Optional[Path]]:
-    narr_voice, char_voice = pick_voices(language, voice_gender)
-
-    narr_path = file_path(f"narr_{uuid.uuid4().hex}.mp3")
-    char_path = file_path(f"char_{uuid.uuid4().hex}.mp3")
-
-    if language == "es":
-        narr_text = text
-        char_text = "¡Hey! Estoy aquí contigo. Dios no se olvida de ti."
-        narr_instr = "Español latino neutro. Voz cálida, clara, ritmo natural."
-        char_instr = "Español latino neutro. Voz más expresiva y alegre, como personaje."
-    else:
-        narr_text = text
-        char_text = "Hey! I'm here with you. God hasn't forgotten you."
-        narr_instr = "Clear English. Warm narrator, natural pacing."
-        char_instr = "Clear English. More expressive character voice."
-
-    await openai_tts_to_file(narr_text, voice=narr_voice, out_path=narr_path, response_format="mp3", instructions=narr_instr)
-
-    if mode == "narrator_plus_character":
-        await openai_tts_to_file(char_text, voice=char_voice, out_path=char_path, response_format="mp3", instructions=char_instr)
-        return narr_path, char_path
-
-    return narr_path, None
-
-def concat_mp3(a: Path, b: Path, out_mp3: Path):
-    """
-    Une 2 mp3 en 1 mp3 (re-encode) usando concat demuxer.
-    """
-    list_file = file_path(f"list_{uuid.uuid4().hex}.txt")
-    # Importante: usar rutas POSIX
-    list_file.write_text(f"file '{a.as_posix()}'\nfile '{b.as_posix()}'\n", encoding="utf-8")
-
-    run_ffmpeg([
-        FFMPEG_PATH, "-y",
-        "-f", "concat", "-safe", "0",
-        "-i", str(list_file),
-        "-c:a", "libmp3lame",
-        str(out_mp3),
-    ])
+def choose_voice_pair(language: str, voice_gender: str) -> tuple[str, str]:
+    # narrador, personaje (para que sí se note que son 2)
+    if voice_gender == "male":
+        return ("onyx", "echo")   # narrador, personaje
+    return ("nova", "shimmer")   # narrador, personaje
 
 def choose_music_path(kind: str) -> Optional[Path]:
     if kind == "soft" and MUSIC_SOFT.exists():
@@ -233,19 +187,25 @@ def choose_music_path(kind: str) -> Optional[Path]:
         return MUSIC_CINEMATIC
     return None
 
+def concat_audios(a1: Path, a2: Path, out_mp3: Path) -> None:
+    # Une narrador + personaje en un solo audio
+    run_ffmpeg([
+        FFMPEG_PATH, "-y",
+        "-i", str(a1),
+        "-i", str(a2),
+        "-filter_complex", "[0:a][1:a]concat=n=2:v=0:a=1[a]",
+        "-map", "[a]",
+        "-c:a", "libmp3lame",
+        "-q:a", "3",
+        str(out_mp3),
+    ])
+
 def mux_video_audio(
     video_path: Path,
     voice_path: Optional[Path],
     music_path: Optional[Path],
     out_path: Path,
 ):
-    """
-    Mezcla:
-    - voz sola
-    - voz + música (ducking)
-    - música sola
-    - nada: copia video
-    """
     if voice_path and music_path:
         run_ffmpeg([
             FFMPEG_PATH, "-y",
@@ -253,7 +213,9 @@ def mux_video_audio(
             "-i", str(voice_path),
             "-stream_loop", "-1", "-i", str(music_path),
             "-filter_complex",
-            "[2:a]volume=0.25[m];[m][1:a]sidechaincompress=threshold=0.03:ratio=10:attack=20:release=250[mduck];[1:a][mduck]amix=inputs=2:duration=shortest[aout]",
+            "[2:a]volume=0.25[m];"
+            "[m][1:a]sidechaincompress=threshold=0.03:ratio=10:attack=20:release=250[mduck];"
+            "[1:a][mduck]amix=inputs=2:duration=shortest[aout]",
             "-map", "0:v:0",
             "-map", "[aout]",
             "-shortest",
@@ -294,10 +256,33 @@ def mux_video_audio(
     out_path.write_bytes(video_path.read_bytes())
 
 async def download_to_file(url: str, out_path: Path) -> None:
-    async with httpx.AsyncClient(timeout=180) as client:
+    async with httpx.AsyncClient(timeout=240) as client:
         r = await client.get(url)
         r.raise_for_status()
         out_path.write_bytes(r.content)
+
+def build_tts_parts(text: str, language: str, mode: str) -> tuple[str, str, str, str]:
+    """
+    Devuelve:
+    narr_text, narr_instr, char_text, char_instr
+    """
+    if language == "es":
+        narr_instr = "Habla en español latino neutro. Voz cálida, clara, estilo narrador."
+        char_instr = "Español latino neutro. Más expresivo, como personaje de historia."
+        if mode == "narrator_plus_character":
+            char_text = "¡Wow! Dios sigue al control. Estoy contigo."
+        else:
+            char_text = ""
+        return text, narr_instr, char_text, char_instr
+
+    # EN
+    narr_instr = "Clear English. Warm storyteller narrator style."
+    char_instr = "English. More expressive, character style."
+    if mode == "narrator_plus_character":
+        char_text = "Wow! God is still in control. I’m with you."
+    else:
+        char_text = ""
+    return text, narr_instr, char_text, char_instr
 
 # =========================
 # ROOT / FILES / UI
@@ -346,7 +331,7 @@ async def chat(req: ChatRequest):
     return {"reply": data["choices"][0]["message"]["content"]}
 
 # =========================
-# IMAGE (devuelve URL servida por tu backend)
+# IMAGE
 # =========================
 @app.post("/image")
 async def image(req: ImageRequest, request: Request):
@@ -374,26 +359,26 @@ async def image(req: ImageRequest, request: Request):
     path.write_bytes(img_bytes)
 
     rel = f"/files/{name}"
-    return {"status": "ok", "image_url": rel, "image_url_full": absolute_url(request, rel)}
+    return {"status": "ok", "image_url": absolute_url(request, rel)}
 
 # =========================
 # REELS MP4 (LOCAL)
 # =========================
 @app.post("/reels")
-def reels(req: VideoRequest):
+def reels(req: VideoRequest, request: Request):
     name = f"reels_{uuid.uuid4().hex}.mp4"
     path = file_path(name)
     make_reels_video(req.text, req.duration, path)
-    return FileResponse(path, media_type="video/mp4", filename=name)
+    rel = f"/files/{name}"
+    return {"status": "ok", "video_url": absolute_url(request, rel)}
 
 # =========================
-# TTS -> mp3 servido por /files/...
+# TTS (OpenAI) -> mp3
 # =========================
 @app.post("/tts")
 async def tts(req: TTSRequest, request: Request):
     name = safe_filename(req.response_format)
     out_path = file_path(name)
-
     await openai_tts_to_file(
         text=req.text,
         voice=req.voice,
@@ -402,12 +387,11 @@ async def tts(req: TTSRequest, request: Request):
         response_format=req.response_format,
         instructions=req.instructions,
     )
-
     rel = f"/files/{name}"
-    return {"status": "ok", "audio_url": rel, "audio_url_full": absolute_url(request, rel)}
+    return {"status": "ok", "audio_url": absolute_url(request, rel)}
 
 # =========================
-# REELS CON VOZ + MÚSICA (con personaje real)
+# REELS CON VOZ + MÚSICA
 # =========================
 @app.post("/reels-voice")
 async def reels_voice(req: ReelsVoiceRequest, request: Request):
@@ -416,14 +400,23 @@ async def reels_voice(req: ReelsVoiceRequest, request: Request):
     base_path = file_path(base_name)
     make_reels_video(req.text, req.duration, base_path)
 
-    # 2) voz: narrador + personaje (2 voces) si aplica
-    narr_mp3, char_mp3 = await tts_narrator_and_character(req.language, req.mode, req.voice_gender, req.text)
+    # 2) voz (narrador o narrador+personaje)
+    if req.mode == "narrator_plus_character":
+        v_narr, v_char = choose_voice_pair(req.language, req.voice_gender)
+        narr_text, narr_instr, char_text, char_instr = build_tts_parts(req.text, req.language, req.mode)
 
-    voice_path = narr_mp3
-    if char_mp3:
-        merged = file_path(f"voice_{uuid.uuid4().hex}.mp3")
-        concat_mp3(narr_mp3, char_mp3, merged)
-        voice_path = merged
+        a1 = file_path(safe_filename("mp3"))
+        a2 = file_path(safe_filename("mp3"))
+        await openai_tts_to_file(narr_text, voice=v_narr, out_path=a1, response_format="mp3", instructions=narr_instr)
+        await openai_tts_to_file(char_text, voice=v_char, out_path=a2, response_format="mp3", instructions=char_instr)
+
+        voice_path = file_path(safe_filename("mp3"))
+        concat_audios(a1, a2, voice_path)
+    else:
+        voice = choose_voice(req.language, req.voice_gender)
+        instr = "Voz clara, cálida, ritmo natural." if req.language == "es" else "Clear, warm voice, natural pacing."
+        voice_path = file_path(safe_filename("mp3"))
+        await openai_tts_to_file(req.text, voice=voice, out_path=voice_path, response_format="mp3", instructions=instr)
 
     # 3) música
     music_path = choose_music_path(req.music)
@@ -434,59 +427,26 @@ async def reels_voice(req: ReelsVoiceRequest, request: Request):
     mux_video_audio(base_path, voice_path, music_path, out_path)
 
     rel = f"/files/{out_name}"
-    return {"status": "ok", "video_url": rel, "video_url_full": absolute_url(request, rel)}
+    return {"status": "ok", "video_url": absolute_url(request, rel)}
 
 # =========================
-# VIDEO CINE (TEXTO → VIDEO) (FAL)
+# VIDEO CINE (TEXTO → VIDEO) - FAL TEXT-TO-VIDEO
 # =========================
 @app.post("/video-cine")
-def video_cine(req: VideoRequest):
+def video_cine(req: VideoRequest, request: Request):
     if not os.getenv("FAL_KEY"):
         return {"status": "error", "message": "FAL_KEY no configurada"}
 
     try:
-        result = fal_client.run(
-            os.getenv("VIDEO_MODEL_CINE", "fal-ai/wan-v2.1/14b/image-to-video"),
+        handler = fal_client.submit(
+            VIDEO_MODEL_CINE,
             arguments={
                 "prompt": req.text,
                 "duration": req.duration,
             },
         )
+        result = handler.get()
 
-        url = None
-        if isinstance(result, dict):
-            if result.get("video") and isinstance(result["video"], dict):
-                url = result["video"].get("url")
-            if not url and result.get("videos"):
-                url = result["videos"][0].get("url")
-
-        if not url:
-            return {"status": "error", "message": "No se obtuvo video_url", "raw": result}
-        return {"status": "ok", "video_url": url}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
-
-# =========================
-# VIDEO CINE + VOZ + MUSICA (con personaje real)
-# =========================
-@app.post("/video-cine-voice")
-async def video_cine_voice(req: CineVoiceRequest, request: Request):
-    if not os.getenv("FAL_KEY"):
-        return {"status": "error", "message": "FAL_KEY no configurada"}
-    if not OPENAI_API_KEY:
-        return {"status": "error", "message": "OPENAI_API_KEY no configurada"}
-
-    try:
-        # 1) generar cine con tu modelo actual
-        result = fal_client.run(
-            os.getenv("VIDEO_MODEL_CINE", "fal-ai/wan-v2.1/14b/image-to-video"),
-            arguments={
-                "prompt": req.text,
-                "duration": req.duration,
-            },
-        )
-
-        # 2) sacar URL del video
         video_url = None
         if isinstance(result, dict):
             if result.get("video") and isinstance(result["video"], dict):
@@ -497,29 +457,75 @@ async def video_cine_voice(req: CineVoiceRequest, request: Request):
         if not video_url:
             return {"status": "error", "message": "No se obtuvo video_url", "raw": result}
 
-        # 3) descargar video a /tmp/out
+        return {"status": "ok", "video_url": video_url}
+
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+# =========================
+# VIDEO CINE + VOZ + MUSICA (DESCARGA MP4 FINAL)
+# =========================
+@app.post("/video-cine-voice")
+async def video_cine_voice(req: CineVoiceRequest, request: Request):
+    if not os.getenv("FAL_KEY"):
+        return {"status": "error", "message": "FAL_KEY no configurada"}
+    if not OPENAI_API_KEY:
+        return {"status": "error", "message": "OPENAI_API_KEY no configurada"}
+
+    try:
+        # 1) generar video con FAL
+        handler = fal_client.submit(
+            VIDEO_MODEL_CINE,
+            arguments={
+                "prompt": req.text,
+                "duration": req.duration,
+            },
+        )
+        result = handler.get()
+
+        src_video_url = None
+        if isinstance(result, dict):
+            if result.get("video") and isinstance(result["video"], dict):
+                src_video_url = result["video"].get("url")
+            if not src_video_url and result.get("videos"):
+                src_video_url = result["videos"][0].get("url")
+
+        if not src_video_url:
+            return {"status": "error", "message": "No se obtuvo video_url", "raw": result}
+
+        # 2) descargar video a /tmp/out
         base_name = f"cine_{uuid.uuid4().hex}.mp4"
         base_path = file_path(base_name)
-        await download_to_file(video_url, base_path)
+        await download_to_file(src_video_url, base_path)
 
-        # 4) voz narrador + personaje (2 voces)
-        narr_mp3, char_mp3 = await tts_narrator_and_character(req.language, req.mode, req.voice_gender, req.text)
-        voice_path = narr_mp3
-        if char_mp3:
-            merged = file_path(f"voice_{uuid.uuid4().hex}.mp3")
-            concat_mp3(narr_mp3, char_mp3, merged)
-            voice_path = merged
+        # 3) generar voz (narrador o narrador+personaje)
+        if req.mode == "narrator_plus_character":
+            v_narr, v_char = choose_voice_pair(req.language, req.voice_gender)
+            narr_text, narr_instr, char_text, char_instr = build_tts_parts(req.text, req.language, req.mode)
 
-        # 5) música
+            a1 = file_path(safe_filename("mp3"))
+            a2 = file_path(safe_filename("mp3"))
+            await openai_tts_to_file(narr_text, voice=v_narr, out_path=a1, response_format="mp3", instructions=narr_instr)
+            await openai_tts_to_file(char_text, voice=v_char, out_path=a2, response_format="mp3", instructions=char_instr)
+
+            voice_path = file_path(safe_filename("mp3"))
+            concat_audios(a1, a2, voice_path)
+        else:
+            voice = choose_voice(req.language, req.voice_gender)
+            instr = "Habla en español latino neutro. Voz cálida y natural." if req.language == "es" else "Clear English, warm and natural pacing."
+            voice_path = file_path(safe_filename("mp3"))
+            await openai_tts_to_file(req.text, voice=voice, out_path=voice_path, response_format="mp3", instructions=instr)
+
+        # 4) música
         music_path = choose_music_path(req.music)
 
-        # 6) mux final
+        # 5) mux final
         out_name = f"cine_voice_{uuid.uuid4().hex}.mp4"
         out_path = file_path(out_name)
         mux_video_audio(base_path, voice_path, music_path, out_path)
 
         rel = f"/files/{out_name}"
-        return {"status": "ok", "video_url": rel, "video_url_full": absolute_url(request, rel)}
+        return {"status": "ok", "video_url": absolute_url(request, rel)}
 
     except Exception as e:
         return {"status": "error", "message": str(e)}
