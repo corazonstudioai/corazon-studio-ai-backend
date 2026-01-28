@@ -31,7 +31,6 @@ OPENAI_TTS_MODEL = os.getenv("OPENAI_TTS_MODEL", "gpt-4o-mini-tts")
 fal_client.api_key = os.getenv("FAL_KEY")  # debe ser EXACTO: FAL_KEY en Render
 
 # Modelo cine (FAL) - TEXT TO VIDEO
-# Puedes cambiarlo en Render con variable VIDEO_MODEL_CINE
 VIDEO_MODEL_CINE = os.getenv(
     "VIDEO_MODEL_CINE",
     "fal-ai/wan/v2.2-a14b/text-to-video/turbo"
@@ -44,8 +43,17 @@ OUT_DIR = Path("/tmp/out")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 ASSETS_DIR = Path("assets")
+FONTS_DIR = ASSETS_DIR / "fonts"
+
+# Música (pon tus mp3 aquí)
 MUSIC_SOFT = ASSETS_DIR / "music_soft.mp3"
 MUSIC_CINEMATIC = ASSETS_DIR / "music_cinematic.mp3"
+MUSIC_HAPPY = ASSETS_DIR / "music_happy.mp3"
+
+# Fuentes (pon tus ttf aquí)
+FONT_INSPIRADOR = FONTS_DIR / "Poppins-SemiBold.ttf"
+FONT_IMPACTANTE = FONTS_DIR / "Montserrat-ExtraBold.ttf"
+FONT_MINIMAL = FONTS_DIR / "Inter-SemiBold.ttf"
 
 # =========================
 # APP
@@ -70,10 +78,18 @@ class ImageRequest(BaseModel):
     size: str = "1024x1024"
 
 class VideoRequest(BaseModel):
+    # Se usa para /reels y /video-cine (para compatibilidad)
     text: str
     duration: int = 5
     format: str = "9:16"
     cfg: float = 0.5
+
+    # ✅ NUEVO (para reels con estilo; si no mandas nada, usa defaults bonitos)
+    style: Literal["inspirador", "impactante", "minimal"] = "inspirador"
+    bg: Literal["gradient", "dark", "light"] = "gradient"
+    text_anim: Literal["fade", "slide", "zoom"] = "fade"
+    emoji_mode: Literal["auto", "off"] = "auto"
+    music: Literal["none", "soft", "cinematic", "happy"] = "soft"
 
 class TTSRequest(BaseModel):
     text: str
@@ -89,7 +105,13 @@ class ReelsVoiceRequest(BaseModel):
     language: Literal["es", "en"] = "es"
     mode: Literal["narrator_only", "narrator_plus_character"] = "narrator_only"
     voice_gender: Literal["female", "male"] = "female"
-    music: Literal["none", "soft", "cinematic"] = "soft"
+    music: Literal["none", "soft", "cinematic", "happy"] = "soft"
+
+    # ✅ NUEVO (estilo visual del reel)
+    style: Literal["inspirador", "impactante", "minimal"] = "inspirador"
+    bg: Literal["gradient", "dark", "light"] = "gradient"
+    text_anim: Literal["fade", "slide", "zoom"] = "fade"
+    emoji_mode: Literal["auto", "off"] = "auto"
 
 class CineVoiceRequest(BaseModel):
     text: str
@@ -99,7 +121,7 @@ class CineVoiceRequest(BaseModel):
     language: Literal["es", "en"] = "es"
     mode: Literal["narrator_only", "narrator_plus_character"] = "narrator_only"
     voice_gender: Literal["female", "male"] = "female"
-    music: Literal["none", "soft", "cinematic"] = "soft"
+    music: Literal["none", "soft", "cinematic", "happy"] = "soft"
 
 # =========================
 # HELPERS
@@ -116,27 +138,209 @@ def file_path(name: str) -> Path:
     return OUT_DIR / name
 
 def absolute_url(request: Request, path: str) -> str:
-    # path: "/files/xxx.mp4"
     base = str(request.base_url).rstrip("/")
     return f"{base}{path}"
 
-def make_reels_video(text: str, duration: int, out_path: Path):
+def _load_font(path: Path, size: int) -> ImageFont.FreeTypeFont:
+    try:
+        if path.exists():
+            return ImageFont.truetype(str(path), size)
+    except Exception:
+        pass
+    try:
+        return ImageFont.truetype("DejaVuSans.ttf", size)
+    except Exception:
+        return ImageFont.load_default()
+
+def _font_for_style(style: str, size: int) -> ImageFont.FreeTypeFont:
+    if style == "impactante":
+        return _load_font(FONT_IMPACTANTE, size)
+    if style == "minimal":
+        return _load_font(FONT_MINIMAL, size)
+    return _load_font(FONT_INSPIRADOR, size)
+
+def _wrap_text(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont, max_width: int) -> list[str]:
+    # wrap simple por palabras
+    words = text.split()
+    lines = []
+    cur = ""
+    for w in words:
+        test = (cur + " " + w).strip()
+        bbox = draw.textbbox((0, 0), test, font=font)
+        if (bbox[2] - bbox[0]) <= max_width:
+            cur = test
+        else:
+            if cur:
+                lines.append(cur)
+            cur = w
+    if cur:
+        lines.append(cur)
+    return lines[:8]  # límite para que no se desborde
+
+def _auto_emojis(text: str) -> str:
+    t = text.lower()
+    picks = []
+    # espiritual / motivacional (simple, sin exagerar)
+    if any(k in t for k in ["dios", "fe", "cristo", "señor", "oración", "oracion"]):
+        picks += ["🙏", "✨"]
+    if any(k in t for k in ["bendición", "bendicion", "milagro"]):
+        picks += ["🙌"]
+    if any(k in t for k in ["amor", "familia", "hijo", "hija"]):
+        picks += ["❤️"]
+    if any(k in t for k in ["fuerza", "valiente", "ánimo", "animo", "sigue"]):
+        picks += ["💪", "🔥"]
+
+    # deja máximo 2 emojis para que se vea pro
+    picks = list(dict.fromkeys(picks))[:2]
+    if picks:
+        return f"{text} {' '.join(picks)}"
+    return text
+
+def _bg_image(w: int, h: int, kind: str) -> Image.Image:
+    # Fondos bonitos sin complicar
+    if kind == "light":
+        return Image.new("RGB", (w, h), (245, 247, 252))
+    if kind == "dark":
+        return Image.new("RGB", (w, h), (10, 16, 28))
+
+    # gradient (default)
+    top = (116, 91, 255)      # morado suave
+    bottom = (15, 20, 35)     # azul noche
+    img = Image.new("RGB", (w, h), top)
+    px = img.load()
+    for y in range(h):
+        a = y / max(1, h - 1)
+        r = int(top[0] * (1 - a) + bottom[0] * a)
+        g = int(top[1] * (1 - a) + bottom[1] * a)
+        b = int(top[2] * (1 - a) + bottom[2] * a)
+        for x in range(w):
+            px[x, y] = (r, g, b)
+    return img
+
+def _draw_text_centered(
+    base: Image.Image,
+    text: str,
+    style: str,
+    anim: str,
+    frame_i: int,
+    frames: int
+) -> Image.Image:
+    w, h = base.size
+    # tamaños según estilo
+    if style == "impactante":
+        font_size = 72
+    elif style == "minimal":
+        font_size = 60
+    else:
+        font_size = 64
+
+    # anim progress 0..1
+    p = frame_i / max(1, frames - 1)
+
+    # animaciones simples (bonitas y rápidas)
+    if anim == "fade":
+        alpha = int(255 * min(1.0, max(0.0, p * 1.2)))
+        y_offset = 0
+        scale = 1.0
+    elif anim == "slide":
+        alpha = 255
+        # entra desde abajo
+        y_offset = int((1 - p) * 80)
+        scale = 1.0
+    else:  # zoom
+        alpha = 255
+        scale = 0.92 + (p * 0.10)  # 0.92 -> 1.02
+        y_offset = 0
+
+    # trabajar en RGBA para alpha
+    canvas = base.convert("RGBA")
+    overlay = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+
+    font = _font_for_style(style, int(font_size * scale))
+
+    # caja para texto
+    padding_x = 64
+    max_width = w - (padding_x * 2)
+
+    lines = _wrap_text(draw, text, font, max_width=max_width)
+
+    # medir alto total
+    line_heights = []
+    line_widths = []
+    for line in lines:
+        bbox = draw.textbbox((0, 0), line, font=font)
+        line_widths.append(bbox[2] - bbox[0])
+        line_heights.append(bbox[3] - bbox[1])
+
+    total_h = sum(line_heights) + (len(lines) - 1) * 14
+    start_y = (h - total_h) // 2 - y_offset
+
+    # sombra + texto
+    # color según estilo
+    if style == "minimal":
+        fill = (255, 255, 255, alpha)
+    elif style == "impactante":
+        fill = (255, 255, 255, alpha)
+    else:
+        fill = (255, 255, 255, alpha)
+
+    shadow = (0, 0, 0, int(alpha * 0.65))
+
+    y = start_y
+    for idx, line in enumerate(lines):
+        lw = line_widths[idx]
+        x = (w - lw) // 2
+
+        # sombra (ligera)
+        draw.text((x + 3, y + 3), line, font=font, fill=shadow)
+        # texto
+        draw.text((x, y), line, font=font, fill=fill)
+
+        y += line_heights[idx] + 14
+
+    out = Image.alpha_composite(canvas, overlay).convert("RGB")
+    return out
+
+def make_reels_video_styled(
+    text: str,
+    duration: int,
+    out_path: Path,
+    style: str = "inspirador",
+    bg: str = "gradient",
+    text_anim: str = "fade",
+    emoji_mode: str = "auto",
+):
     w, h = 720, 1280
     fps = 24
     frames = max(1, duration * fps)
 
-    try:
-        font = ImageFont.truetype("DejaVuSans.ttf", 56)
-    except Exception:
-        font = ImageFont.load_default()
+    if emoji_mode == "auto":
+        text = _auto_emojis(text)
 
     writer = imageio.get_writer(str(out_path), fps=fps)
-    for _ in range(frames):
-        img = Image.new("RGB", (w, h), (10, 16, 28))
-        draw = ImageDraw.Draw(img)
-        draw.text((60, h // 2), text, font=font, fill=(255, 255, 255))
-        writer.append_data(np.array(img))
+
+    for i in range(frames):
+        base = _bg_image(w, h, bg)
+        # leve “glow” superior (se ve más pro)
+        glow = Image.new("RGBA", (w, h), (255, 255, 255, 0))
+        gdraw = ImageDraw.Draw(glow)
+        gdraw.ellipse((-200, -240, w + 200, 240), fill=(255, 255, 255, 38))
+        base = Image.alpha_composite(base.convert("RGBA"), glow).convert("RGB")
+
+        frame = _draw_text_centered(base, text, style, text_anim, i, frames)
+        writer.append_data(np.array(frame))
+
     writer.close()
+
+def choose_music_path(kind: str) -> Optional[Path]:
+    if kind == "soft" and MUSIC_SOFT.exists():
+        return MUSIC_SOFT
+    if kind == "cinematic" and MUSIC_CINEMATIC.exists():
+        return MUSIC_CINEMATIC
+    if kind == "happy" and MUSIC_HAPPY.exists():
+        return MUSIC_HAPPY
+    return None
 
 async def openai_tts_to_file(
     text: str,
@@ -169,26 +373,16 @@ async def openai_tts_to_file(
         out_path.write_bytes(r.content)
 
 def choose_voice(language: str, voice_gender: str) -> str:
-    # Puedes cambiar después. (funciona bien para ES/EN)
     if voice_gender == "male":
         return "onyx"
     return "nova"
 
 def choose_voice_pair(language: str, voice_gender: str) -> tuple[str, str]:
-    # narrador, personaje (para que sí se note que son 2)
     if voice_gender == "male":
-        return ("onyx", "echo")   # narrador, personaje
-    return ("nova", "shimmer")   # narrador, personaje
-
-def choose_music_path(kind: str) -> Optional[Path]:
-    if kind == "soft" and MUSIC_SOFT.exists():
-        return MUSIC_SOFT
-    if kind == "cinematic" and MUSIC_CINEMATIC.exists():
-        return MUSIC_CINEMATIC
-    return None
+        return ("onyx", "echo")
+    return ("nova", "shimmer")
 
 def concat_audios(a1: Path, a2: Path, out_mp3: Path) -> None:
-    # Une narrador + personaje en un solo audio
     run_ffmpeg([
         FFMPEG_PATH, "-y",
         "-i", str(a1),
@@ -262,10 +456,6 @@ async def download_to_file(url: str, out_path: Path) -> None:
         out_path.write_bytes(r.content)
 
 def build_tts_parts(text: str, language: str, mode: str) -> tuple[str, str, str, str]:
-    """
-    Devuelve:
-    narr_text, narr_instr, char_text, char_instr
-    """
     if language == "es":
         narr_instr = "Habla en español latino neutro. Voz cálida, clara, estilo narrador."
         char_instr = "Español latino neutro. Más expresivo, como personaje de historia."
@@ -275,7 +465,6 @@ def build_tts_parts(text: str, language: str, mode: str) -> tuple[str, str, str,
             char_text = ""
         return text, narr_instr, char_text, char_instr
 
-    # EN
     narr_instr = "Clear English. Warm storyteller narrator style."
     char_instr = "English. More expressive, character style."
     if mode == "narrator_plus_character":
@@ -362,14 +551,35 @@ async def image(req: ImageRequest, request: Request):
     return {"status": "ok", "image_url": absolute_url(request, rel)}
 
 # =========================
-# REELS MP4 (LOCAL)
+# REELS MP4 (LOCAL) - ✅ AHORA CON ESTILO + MÚSICA (opcional)
 # =========================
 @app.post("/reels")
 def reels(req: VideoRequest, request: Request):
-    name = f"reels_{uuid.uuid4().hex}.mp4"
-    path = file_path(name)
-    make_reels_video(req.text, req.duration, path)
-    rel = f"/files/{name}"
+    # 1) video base bonito
+    base_name = f"reels_{uuid.uuid4().hex}.mp4"
+    base_path = file_path(base_name)
+
+    make_reels_video_styled(
+        text=req.text,
+        duration=req.duration,
+        out_path=base_path,
+        style=req.style,
+        bg=req.bg,
+        text_anim=req.text_anim,
+        emoji_mode=req.emoji_mode,
+    )
+
+    # 2) música opcional (para /reels también)
+    music_path = choose_music_path(req.music)
+
+    if music_path:
+        out_name = f"reels_music_{uuid.uuid4().hex}.mp4"
+        out_path = file_path(out_name)
+        mux_video_audio(base_path, voice_path=None, music_path=music_path, out_path=out_path)
+        rel = f"/files/{out_name}"
+        return {"status": "ok", "video_url": absolute_url(request, rel)}
+
+    rel = f"/files/{base_name}"
     return {"status": "ok", "video_url": absolute_url(request, rel)}
 
 # =========================
@@ -391,14 +601,23 @@ async def tts(req: TTSRequest, request: Request):
     return {"status": "ok", "audio_url": absolute_url(request, rel)}
 
 # =========================
-# REELS CON VOZ + MÚSICA
+# REELS CON VOZ + MÚSICA + ✅ ESTILO
 # =========================
 @app.post("/reels-voice")
 async def reels_voice(req: ReelsVoiceRequest, request: Request):
-    # 1) video base
+    # 1) video base bonito
     base_name = f"reels_{uuid.uuid4().hex}.mp4"
     base_path = file_path(base_name)
-    make_reels_video(req.text, req.duration, base_path)
+
+    make_reels_video_styled(
+        text=req.text,
+        duration=req.duration,
+        out_path=base_path,
+        style=req.style,
+        bg=req.bg,
+        text_anim=req.text_anim,
+        emoji_mode=req.emoji_mode,
+    )
 
     # 2) voz (narrador o narrador+personaje)
     if req.mode == "narrator_plus_character":
