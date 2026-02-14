@@ -28,7 +28,7 @@ OPENAI_IMAGE_MODEL = os.getenv("OPENAI_IMAGE_MODEL", "gpt-image-1")
 OPENAI_TTS_MODEL = os.getenv("OPENAI_TTS_MODEL", "gpt-4o-mini-tts")
 
 # FAL
-fal_client.api_key = os.getenv("FAL_KEY")  # debe ser EXACTO: FAL_KEY en Render
+fal_client.api_key = os.getenv("FAL_KEY")  # EXACTO: FAL_KEY en Render
 
 # Modelo cine (FAL) - TEXT TO VIDEO
 VIDEO_MODEL_CINE = os.getenv(
@@ -45,12 +45,12 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 ASSETS_DIR = Path("assets")
 FONTS_DIR = ASSETS_DIR / "fonts"
 
-# Música (pon tus mp3 aquí)
+# Música
 MUSIC_SOFT = ASSETS_DIR / "music_soft.mp3"
 MUSIC_CINEMATIC = ASSETS_DIR / "music_cinematic.mp3"
 MUSIC_HAPPY = ASSETS_DIR / "music_happy.mp3"
 
-# Fuentes (pon tus ttf aquí)
+# Fuentes
 FONT_INSPIRADOR = FONTS_DIR / "Poppins-SemiBold.ttf"
 FONT_IMPACTANTE = FONTS_DIR / "Montserrat-ExtraBold.ttf"
 FONT_MINIMAL = FONTS_DIR / "Inter-SemiBold.ttf"
@@ -78,13 +78,10 @@ class ImageRequest(BaseModel):
     size: str = "1024x1024"
 
 class VideoRequest(BaseModel):
-    # Se usa para /reels y /video-cine (para compatibilidad)
     text: str
     duration: int = 5
     format: str = "9:16"
     cfg: float = 0.5
-
-    # ✅ NUEVO (para reels con estilo; si no mandas nada, usa defaults bonitos)
     style: Literal["inspirador", "impactante", "minimal"] = "inspirador"
     bg: Literal["gradient", "dark", "light"] = "gradient"
     text_anim: Literal["fade", "slide", "zoom"] = "fade"
@@ -106,8 +103,6 @@ class ReelsVoiceRequest(BaseModel):
     mode: Literal["narrator_only", "narrator_plus_character"] = "narrator_only"
     voice_gender: Literal["female", "male"] = "female"
     music: Literal["none", "soft", "cinematic", "happy"] = "soft"
-
-    # ✅ NUEVO (estilo visual del reel)
     style: Literal["inspirador", "impactante", "minimal"] = "inspirador"
     bg: Literal["gradient", "dark", "light"] = "gradient"
     text_anim: Literal["fade", "slide", "zoom"] = "fade"
@@ -160,10 +155,8 @@ def _font_for_style(style: str, size: int) -> ImageFont.FreeTypeFont:
     return _load_font(FONT_INSPIRADOR, size)
 
 def _wrap_text(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont, max_width: int) -> list[str]:
-    # wrap simple por palabras
     words = text.split()
-    lines = []
-    cur = ""
+    lines, cur = [], ""
     for w in words:
         test = (cur + " " + w).strip()
         bbox = draw.textbbox((0, 0), test, font=font)
@@ -175,12 +168,11 @@ def _wrap_text(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont, 
             cur = w
     if cur:
         lines.append(cur)
-    return lines[:8]  # límite para que no se desborde
+    return lines[:8]
 
 def _auto_emojis(text: str) -> str:
     t = text.lower()
     picks = []
-    # espiritual / motivacional (simple, sin exagerar)
     if any(k in t for k in ["dios", "fe", "cristo", "señor", "oración", "oracion"]):
         picks += ["🙏", "✨"]
     if any(k in t for k in ["bendición", "bendicion", "milagro"]):
@@ -189,23 +181,15 @@ def _auto_emojis(text: str) -> str:
         picks += ["❤️"]
     if any(k in t for k in ["fuerza", "valiente", "ánimo", "animo", "sigue"]):
         picks += ["💪", "🔥"]
-
-    # deja máximo 2 emojis para que se vea pro
     picks = list(dict.fromkeys(picks))[:2]
-    if picks:
-        return f"{text} {' '.join(picks)}"
-    return text
+    return f"{text} {' '.join(picks)}" if picks else text
 
 def _bg_image(w: int, h: int, kind: str) -> Image.Image:
-    # Fondos bonitos sin complicar
     if kind == "light":
         return Image.new("RGB", (w, h), (245, 247, 252))
     if kind == "dark":
         return Image.new("RGB", (w, h), (10, 16, 28))
-
-    # gradient (default)
-    top = (116, 91, 255)      # morado suave
-    bottom = (15, 20, 35)     # azul noche
+    top, bottom = (116, 91, 255), (15, 20, 35)
     img = Image.new("RGB", (w, h), top)
     px = img.load()
     for y in range(h):
@@ -217,57 +201,26 @@ def _bg_image(w: int, h: int, kind: str) -> Image.Image:
             px[x, y] = (r, g, b)
     return img
 
-def _draw_text_centered(
-    base: Image.Image,
-    text: str,
-    style: str,
-    anim: str,
-    frame_i: int,
-    frames: int
-) -> Image.Image:
+def _draw_text_centered(base: Image.Image, text: str, style: str, anim: str, frame_i: int, frames: int) -> Image.Image:
     w, h = base.size
-    # tamaños según estilo
-    if style == "impactante":
-        font_size = 72
-    elif style == "minimal":
-        font_size = 60
-    else:
-        font_size = 64
-
-    # anim progress 0..1
+    font_size = 72 if style == "impactante" else 60 if style == "minimal" else 64
     p = frame_i / max(1, frames - 1)
-
-    # animaciones simples (bonitas y rápidas)
     if anim == "fade":
-        alpha = int(255 * min(1.0, max(0.0, p * 1.2)))
-        y_offset = 0
-        scale = 1.0
+        alpha, y_offset, scale = int(255 * min(1.0, max(0.0, p * 1.2))), 0, 1.0
     elif anim == "slide":
-        alpha = 255
-        # entra desde abajo
-        y_offset = int((1 - p) * 80)
-        scale = 1.0
-    else:  # zoom
-        alpha = 255
-        scale = 0.92 + (p * 0.10)  # 0.92 -> 1.02
-        y_offset = 0
+        alpha, y_offset, scale = 255, int((1 - p) * 80), 1.0
+    else:
+        alpha, y_offset, scale = 255, 0, 0.92 + (p * 0.10)
 
-    # trabajar en RGBA para alpha
     canvas = base.convert("RGBA")
     overlay = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
-
     font = _font_for_style(style, int(font_size * scale))
-
-    # caja para texto
     padding_x = 64
     max_width = w - (padding_x * 2)
+    lines = _wrap_text(draw, text, font, max_width)
 
-    lines = _wrap_text(draw, text, font, max_width=max_width)
-
-    # medir alto total
-    line_heights = []
-    line_widths = []
+    line_heights, line_widths = [], []
     for line in lines:
         bbox = draw.textbbox((0, 0), line, font=font)
         line_widths.append(bbox[2] - bbox[0])
@@ -275,62 +228,31 @@ def _draw_text_centered(
 
     total_h = sum(line_heights) + (len(lines) - 1) * 14
     start_y = (h - total_h) // 2 - y_offset
-
-    # sombra + texto
-    # color según estilo
-    if style == "minimal":
-        fill = (255, 255, 255, alpha)
-    elif style == "impactante":
-        fill = (255, 255, 255, alpha)
-    else:
-        fill = (255, 255, 255, alpha)
-
-    shadow = (0, 0, 0, int(alpha * 0.65))
+    fill, shadow = (255, 255, 255, alpha), (0, 0, 0, int(alpha * 0.65))
 
     y = start_y
-    for idx, line in enumerate(lines):
-        lw = line_widths[idx]
-        x = (w - lw) // 2
-
-        # sombra (ligera)
+    for i, line in enumerate(lines):
+        x = (w - line_widths[i]) // 2
         draw.text((x + 3, y + 3), line, font=font, fill=shadow)
-        # texto
         draw.text((x, y), line, font=font, fill=fill)
+        y += line_heights[i] + 14
 
-        y += line_heights[idx] + 14
+    return Image.alpha_composite(canvas, overlay).convert("RGB")
 
-    out = Image.alpha_composite(canvas, overlay).convert("RGB")
-    return out
-
-def make_reels_video_styled(
-    text: str,
-    duration: int,
-    out_path: Path,
-    style: str = "inspirador",
-    bg: str = "gradient",
-    text_anim: str = "fade",
-    emoji_mode: str = "auto",
-):
-    w, h = 720, 1280
-    fps = 24
+def make_reels_video_styled(text: str, duration: int, out_path: Path, style="inspirador", bg="gradient", text_anim="fade", emoji_mode="auto"):
+    w, h, fps = 720, 1280, 24
     frames = max(1, duration * fps)
-
     if emoji_mode == "auto":
         text = _auto_emojis(text)
-
     writer = imageio.get_writer(str(out_path), fps=fps)
-
     for i in range(frames):
         base = _bg_image(w, h, bg)
-        # leve “glow” superior (se ve más pro)
         glow = Image.new("RGBA", (w, h), (255, 255, 255, 0))
         gdraw = ImageDraw.Draw(glow)
         gdraw.ellipse((-200, -240, w + 200, 240), fill=(255, 255, 255, 38))
         base = Image.alpha_composite(base.convert("RGBA"), glow).convert("RGB")
-
         frame = _draw_text_centered(base, text, style, text_anim, i, frames)
         writer.append_data(np.array(frame))
-
     writer.close()
 
 def choose_music_path(kind: str) -> Optional[Path]:
@@ -342,27 +264,12 @@ def choose_music_path(kind: str) -> Optional[Path]:
         return MUSIC_HAPPY
     return None
 
-async def openai_tts_to_file(
-    text: str,
-    voice: str,
-    out_path: Path,
-    speed: float = 1.0,
-    response_format: str = "mp3",
-    instructions: Optional[str] = None
-):
+async def openai_tts_to_file(text: str, voice: str, out_path: Path, speed=1.0, response_format="mp3", instructions=None):
     if not OPENAI_API_KEY:
         raise RuntimeError("OPENAI_API_KEY no configurada")
-
-    payload = {
-        "model": OPENAI_TTS_MODEL,
-        "input": text[:4096],
-        "voice": voice,
-        "speed": speed,
-        "response_format": response_format,
-    }
+    payload = {"model": OPENAI_TTS_MODEL, "input": text[:4096], "voice": voice, "speed": speed, "response_format": response_format}
     if instructions:
         payload["instructions"] = instructions
-
     async with httpx.AsyncClient(timeout=120) as client:
         r = await client.post(
             "https://api.openai.com/v1/audio/speech",
@@ -373,80 +280,26 @@ async def openai_tts_to_file(
         out_path.write_bytes(r.content)
 
 def choose_voice(language: str, voice_gender: str) -> str:
-    if voice_gender == "male":
-        return "onyx"
-    return "nova"
+    return "onyx" if voice_gender == "male" else "nova"
 
 def choose_voice_pair(language: str, voice_gender: str) -> tuple[str, str]:
-    if voice_gender == "male":
-        return ("onyx", "echo")
-    return ("nova", "shimmer")
+    return ("onyx", "echo") if voice_gender == "male" else ("nova", "shimmer")
 
 def concat_audios(a1: Path, a2: Path, out_mp3: Path) -> None:
-    run_ffmpeg([
-        FFMPEG_PATH, "-y",
-        "-i", str(a1),
-        "-i", str(a2),
-        "-filter_complex", "[0:a][1:a]concat=n=2:v=0:a=1[a]",
-        "-map", "[a]",
-        "-c:a", "libmp3lame",
-        "-q:a", "3",
-        str(out_mp3),
-    ])
+    run_ffmpeg([FFMPEG_PATH, "-y", "-i", str(a1), "-i", str(a2), "-filter_complex", "[0:a][1:a]concat=n=2:v=0:a=1[a]", "-map", "[a]", "-c:a", "libmp3lame", "-q:a", "3", str(out_mp3)])
 
-def mux_video_audio(
-    video_path: Path,
-    voice_path: Optional[Path],
-    music_path: Optional[Path],
-    out_path: Path,
-):
+def mux_video_audio(video_path: Path, voice_path: Optional[Path], music_path: Optional[Path], out_path: Path):
     if voice_path and music_path:
-        run_ffmpeg([
-            FFMPEG_PATH, "-y",
-            "-i", str(video_path),
-            "-i", str(voice_path),
-            "-stream_loop", "-1", "-i", str(music_path),
-            "-filter_complex",
-            "[2:a]volume=0.25[m];"
-            "[m][1:a]sidechaincompress=threshold=0.03:ratio=10:attack=20:release=250[mduck];"
-            "[1:a][mduck]amix=inputs=2:duration=shortest[aout]",
-            "-map", "0:v:0",
-            "-map", "[aout]",
-            "-shortest",
-            "-c:v", "copy",
-            "-c:a", "aac",
-            str(out_path),
-        ])
+        run_ffmpeg([FFMPEG_PATH, "-y", "-i", str(video_path), "-i", str(voice_path), "-stream_loop", "-1", "-i", str(music_path),
+                    "-filter_complex", "[2:a]volume=0.25[m];[m][1:a]sidechaincompress=threshold=0.03:ratio=10:attack=20:release=250[mduck];[1:a][mduck]amix=inputs=2:duration=shortest[aout]",
+                    "-map", "0:v:0", "-map", "[aout]", "-shortest", "-c:v", "copy", "-c:a", "aac", str(out_path)])
         return
-
     if voice_path and not music_path:
-        run_ffmpeg([
-            FFMPEG_PATH, "-y",
-            "-i", str(video_path),
-            "-i", str(voice_path),
-            "-map", "0:v:0",
-            "-map", "1:a:0",
-            "-shortest",
-            "-c:v", "copy",
-            "-c:a", "aac",
-            str(out_path),
-        ])
+        run_ffmpeg([FFMPEG_PATH, "-y", "-i", str(video_path), "-i", str(voice_path), "-map", "0:v:0", "-map", "1:a:0", "-shortest", "-c:v", "copy", "-c:a", "aac", str(out_path)])
         return
-
     if (not voice_path) and music_path:
-        run_ffmpeg([
-            FFMPEG_PATH, "-y",
-            "-i", str(video_path),
-            "-stream_loop", "-1", "-i", str(music_path),
-            "-map", "0:v:0",
-            "-map", "1:a:0",
-            "-shortest",
-            "-c:v", "copy",
-            "-c:a", "aac",
-            str(out_path),
-        ])
+        run_ffmpeg([FFMPEG_PATH, "-y", "-i", str(video_path), "-stream_loop", "-1", "-i", str(music_path), "-map", "0:v:0", "-map", "1:a:0", "-shortest", "-c:v", "copy", "-c:a", "aac", str(out_path)])
         return
-
     out_path.write_bytes(video_path.read_bytes())
 
 async def download_to_file(url: str, out_path: Path) -> None:
@@ -459,18 +312,11 @@ def build_tts_parts(text: str, language: str, mode: str) -> tuple[str, str, str,
     if language == "es":
         narr_instr = "Habla en español latino neutro. Voz cálida, clara, estilo narrador."
         char_instr = "Español latino neutro. Más expresivo, como personaje de historia."
-        if mode == "narrator_plus_character":
-            char_text = "¡Wow! Dios sigue al control. Estoy contigo."
-        else:
-            char_text = ""
+        char_text = "¡Wow! Dios sigue al control. Estoy contigo." if mode == "narrator_plus_character" else ""
         return text, narr_instr, char_text, char_instr
-
     narr_instr = "Clear English. Warm storyteller narrator style."
     char_instr = "English. More expressive, character style."
-    if mode == "narrator_plus_character":
-        char_text = "Wow! God is still in control. I’m with you."
-    else:
-        char_text = ""
+    char_text = "Wow! God is still in control. I’m with you." if mode == "narrator_plus_character" else ""
     return text, narr_instr, char_text, char_instr
 
 # =========================
@@ -507,13 +353,7 @@ async def chat(req: ChatRequest):
         r = await client.post(
             "https://api.openai.com/v1/chat/completions",
             headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
-            json={
-                "model": OPENAI_MODEL,
-                "messages": [
-                    {"role": "system", "content": "Eres amable, empático y claro."},
-                    {"role": "user", "content": req.message},
-                ],
-            },
+            json={"model": OPENAI_MODEL, "messages": [{"role": "system", "content": "Eres amable, empático y claro."}, {"role": "user", "content": req.message}]},
         )
         r.raise_for_status()
         data = r.json()
@@ -532,157 +372,76 @@ async def image(req: ImageRequest, request: Request):
         )
         r.raise_for_status()
         data = r.json()
-
-    b64 = None
-    try:
-        b64 = data["data"][0].get("b64_json")
-    except Exception:
-        b64 = None
-
+    b64 = data["data"][0].get("b64_json") if data.get("data") else None
     if not b64:
         return {"status": "ok", "raw": data}
-
     img_bytes = base64.b64decode(b64)
     name = safe_filename("png")
-    path = file_path(name)
-    path.write_bytes(img_bytes)
-
-    rel = f"/files/{name}"
-    return {"status": "ok", "image_url": absolute_url(request, rel)}
+    file_path(name).write_bytes(img_bytes)
+    return {"status": "ok", "image_url": absolute_url(request, f"/files/{name}")}
 
 # =========================
-# REELS MP4 (LOCAL) - ✅ AHORA CON ESTILO + MÚSICA (opcional)
+# REELS / TTS / REELS-VOICE
 # =========================
 @app.post("/reels")
 def reels(req: VideoRequest, request: Request):
-    # 1) video base bonito
     base_name = f"reels_{uuid.uuid4().hex}.mp4"
     base_path = file_path(base_name)
-
-    make_reels_video_styled(
-        text=req.text,
-        duration=req.duration,
-        out_path=base_path,
-        style=req.style,
-        bg=req.bg,
-        text_anim=req.text_anim,
-        emoji_mode=req.emoji_mode,
-    )
-
-    # 2) música opcional (para /reels también)
+    make_reels_video_styled(req.text, req.duration, base_path, req.style, req.bg, req.text_anim, req.emoji_mode)
     music_path = choose_music_path(req.music)
-
     if music_path:
         out_name = f"reels_music_{uuid.uuid4().hex}.mp4"
         out_path = file_path(out_name)
-        mux_video_audio(base_path, voice_path=None, music_path=music_path, out_path=out_path)
-        rel = f"/files/{out_name}"
-        return {"status": "ok", "video_url": absolute_url(request, rel)}
+        mux_video_audio(base_path, None, music_path, out_path)
+        return {"status": "ok", "video_url": absolute_url(request, f"/files/{out_name}")}
+    return {"status": "ok", "video_url": absolute_url(request, f"/files/{base_name}")}
 
-    rel = f"/files/{base_name}"
-    return {"status": "ok", "video_url": absolute_url(request, rel)}
-
-# =========================
-# TTS (OpenAI) -> mp3
-# =========================
 @app.post("/tts")
 async def tts(req: TTSRequest, request: Request):
     name = safe_filename(req.response_format)
     out_path = file_path(name)
-    await openai_tts_to_file(
-        text=req.text,
-        voice=req.voice,
-        out_path=out_path,
-        speed=req.speed,
-        response_format=req.response_format,
-        instructions=req.instructions,
-    )
-    rel = f"/files/{name}"
-    return {"status": "ok", "audio_url": absolute_url(request, rel)}
+    await openai_tts_to_file(req.text, req.voice, out_path, req.speed, req.response_format, req.instructions)
+    return {"status": "ok", "audio_url": absolute_url(request, f"/files/{name}")}
 
-# =========================
-# REELS CON VOZ + MÚSICA + ✅ ESTILO
-# =========================
 @app.post("/reels-voice")
 async def reels_voice(req: ReelsVoiceRequest, request: Request):
-    # 1) video base bonito
     base_name = f"reels_{uuid.uuid4().hex}.mp4"
     base_path = file_path(base_name)
-
-    make_reels_video_styled(
-        text=req.text,
-        duration=req.duration,
-        out_path=base_path,
-        style=req.style,
-        bg=req.bg,
-        text_anim=req.text_anim,
-        emoji_mode=req.emoji_mode,
-    )
-
-    # 2) voz (narrador o narrador+personaje)
+    make_reels_video_styled(req.text, req.duration, base_path, req.style, req.bg, req.text_anim, req.emoji_mode)
     if req.mode == "narrator_plus_character":
         v_narr, v_char = choose_voice_pair(req.language, req.voice_gender)
         narr_text, narr_instr, char_text, char_instr = build_tts_parts(req.text, req.language, req.mode)
-
-        a1 = file_path(safe_filename("mp3"))
-        a2 = file_path(safe_filename("mp3"))
-        await openai_tts_to_file(narr_text, voice=v_narr, out_path=a1, response_format="mp3", instructions=narr_instr)
-        await openai_tts_to_file(char_text, voice=v_char, out_path=a2, response_format="mp3", instructions=char_instr)
-
+        a1, a2 = file_path(safe_filename("mp3")), file_path(safe_filename("mp3"))
+        await openai_tts_to_file(narr_text, v_narr, a1, instructions=narr_instr)
+        await openai_tts_to_file(char_text, v_char, a2, instructions=char_instr)
         voice_path = file_path(safe_filename("mp3"))
         concat_audios(a1, a2, voice_path)
     else:
-        voice = choose_voice(req.language, req.voice_gender)
-        instr = "Voz clara, cálida, ritmo natural." if req.language == "es" else "Clear, warm voice, natural pacing."
         voice_path = file_path(safe_filename("mp3"))
-        await openai_tts_to_file(req.text, voice=voice, out_path=voice_path, response_format="mp3", instructions=instr)
-
-    # 3) música
+        instr = "Voz clara, cálida, ritmo natural." if req.language == "es" else "Clear, warm voice, natural pacing."
+        await openai_tts_to_file(req.text, choose_voice(req.language, req.voice_gender), voice_path, instructions=instr)
     music_path = choose_music_path(req.music)
-
-    # 4) mux final
     out_name = f"reels_voice_{uuid.uuid4().hex}.mp4"
     out_path = file_path(out_name)
     mux_video_audio(base_path, voice_path, music_path, out_path)
-
-    rel = f"/files/{out_name}"
-    return {"status": "ok", "video_url": absolute_url(request, rel)}
+    return {"status": "ok", "video_url": absolute_url(request, f"/files/{out_name}")}
 
 # =========================
-# VIDEO CINE (TEXTO → VIDEO) - FAL TEXT-TO-VIDEO
+# VIDEO CINE (FAL)
 # =========================
 @app.post("/video-cine")
 def video_cine(req: VideoRequest, request: Request):
     if not os.getenv("FAL_KEY"):
         return {"status": "error", "message": "FAL_KEY no configurada"}
-
-    try:
-        handler = fal_client.submit(
-            VIDEO_MODEL_CINE,
-            arguments={
-                "prompt": req.text,
-                "duration": req.duration,
-            },
-        )
-        result = handler.get()
-
-        video_url = None
-        if isinstance(result, dict):
-            if result.get("video") and isinstance(result["video"], dict):
-                video_url = result["video"].get("url")
-            if not video_url and result.get("videos"):
-                video_url = result["videos"][0].get("url")
-
-        if not video_url:
-            return {"status": "error", "message": "No se obtuvo video_url", "raw": result}
-
-        return {"status": "ok", "video_url": video_url}
-
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
+    handler = fal_client.submit(VIDEO_MODEL_CINE, arguments={"prompt": req.text, "duration": req.duration})
+    result = handler.get()
+    video_url = (result.get("video", {}) or {}).get("url") or (result.get("videos", [{}])[0] or {}).get("url")
+    if not video_url:
+        return {"status": "error", "message": "No se obtuvo video_url", "raw": result}
+    return {"status": "ok", "video_url": video_url}
 
 # =========================
-# VIDEO CINE + VOZ + MUSICA (DESCARGA MP4 FINAL)
+# VIDEO CINE + VOZ + MUSICA  (MEJORA MINIMA)
 # =========================
 @app.post("/video-cine-voice")
 async def video_cine_voice(req: CineVoiceRequest, request: Request):
@@ -691,60 +450,35 @@ async def video_cine_voice(req: CineVoiceRequest, request: Request):
     if not OPENAI_API_KEY:
         return {"status": "error", "message": "OPENAI_API_KEY no configurada"}
 
-    try:
-        # 1) generar video con FAL
-        handler = fal_client.submit(
-            VIDEO_MODEL_CINE,
-            arguments={
-                "prompt": req.text,
-                "duration": req.duration,
-            },
-        )
-        result = handler.get()
+    handler = fal_client.submit(VIDEO_MODEL_CINE, arguments={"prompt": req.text, "duration": req.duration})
+    result = handler.get()
+    src_video_url = (result.get("video", {}) or {}).get("url") or (result.get("videos", [{}])[0] or {}).get("url")
+    if not src_video_url:
+        return {"status": "error", "message": "No se obtuvo video_url", "raw": result}
 
-        src_video_url = None
-        if isinstance(result, dict):
-            if result.get("video") and isinstance(result["video"], dict):
-                src_video_url = result["video"].get("url")
-            if not src_video_url and result.get("videos"):
-                src_video_url = result["videos"][0].get("url")
+    base_name = f"cine_{uuid.uuid4().hex}.mp4"
+    base_path = file_path(base_name)
+    await download_to_file(src_video_url, base_path)
 
-        if not src_video_url:
-            return {"status": "error", "message": "No se obtuvo video_url", "raw": result}
+    if req.mode == "narrator_plus_character":
+        v_narr, v_char = choose_voice_pair(req.language, req.voice_gender)
+        narr_text, narr_instr, char_text, char_instr = build_tts_parts(req.text, req.language, req.mode)
+        a1, a2 = file_path(safe_filename("mp3")), file_path(safe_filename("mp3"))
+        await openai_tts_to_file(narr_text, v_narr, a1, instructions=narr_instr)
+        await openai_tts_to_file(char_text, v_char, a2, instructions=char_instr)
+        voice_path = file_path(safe_filename("mp3"))
+        concat_audios(a1, a2, voice_path)
+    else:
+        voice_path = file_path(safe_filename("mp3"))
+        instr = "Habla en español latino neutro. Voz cálida y natural." if req.language == "es" else "Clear English, warm and natural pacing."
+        await openai_tts_to_file(req.text, choose_voice(req.language, req.voice_gender), voice_path, instructions=instr)
 
-        # 2) descargar video a /tmp/out
-        base_name = f"cine_{uuid.uuid4().hex}.mp4"
-        base_path = file_path(base_name)
-        await download_to_file(src_video_url, base_path)
+    music_path = choose_music_path(req.music)
+    out_name = f"cine_voice_{uuid.uuid4().hex}.mp4"
+    out_path = file_path(out_name)
+    mux_video_audio(base_path, voice_path, music_path, out_path)
 
-        # 3) generar voz (narrador o narrador+personaje)
-        if req.mode == "narrator_plus_character":
-            v_narr, v_char = choose_voice_pair(req.language, req.voice_gender)
-            narr_text, narr_instr, char_text, char_instr = build_tts_parts(req.text, req.language, req.mode)
+    final_url = absolute_url(request, f"/files/{out_name}")
+    print("✅ /video-cine-voice OK:", {"video_url": final_url, "filename": out_name, "src_video_url": src_video_url})
 
-            a1 = file_path(safe_filename("mp3"))
-            a2 = file_path(safe_filename("mp3"))
-            await openai_tts_to_file(narr_text, voice=v_narr, out_path=a1, response_format="mp3", instructions=narr_instr)
-            await openai_tts_to_file(char_text, voice=v_char, out_path=a2, response_format="mp3", instructions=char_instr)
-
-            voice_path = file_path(safe_filename("mp3"))
-            concat_audios(a1, a2, voice_path)
-        else:
-            voice = choose_voice(req.language, req.voice_gender)
-            instr = "Habla en español latino neutro. Voz cálida y natural." if req.language == "es" else "Clear English, warm and natural pacing."
-            voice_path = file_path(safe_filename("mp3"))
-            await openai_tts_to_file(req.text, voice=voice, out_path=voice_path, response_format="mp3", instructions=instr)
-
-        # 4) música
-        music_path = choose_music_path(req.music)
-
-        # 5) mux final
-        out_name = f"cine_voice_{uuid.uuid4().hex}.mp4"
-        out_path = file_path(out_name)
-        mux_video_audio(base_path, voice_path, music_path, out_path)
-
-        rel = f"/files/{out_name}"
-        return {"status": "ok", "video_url": absolute_url(request, rel)}
-
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
+    return {"status": "ok", "video_url": final_url, "filename": out_name, "src_video_url": src_video_url}
