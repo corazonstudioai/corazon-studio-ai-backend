@@ -63,12 +63,16 @@ alter table public.usage_counters enable row level security;
 alter table public.generation_events enable row level security;
 alter table public.plan_resource_limits enable row level security;
 
+drop policy if exists "users read own billing account" on public.billing_accounts;
 create policy "users read own billing account" on public.billing_accounts
   for select using (auth.uid() = user_id);
+drop policy if exists "users read own counters" on public.usage_counters;
 create policy "users read own counters" on public.usage_counters
   for select using (auth.uid() = user_id);
+drop policy if exists "users read own generations" on public.generation_events;
 create policy "users read own generations" on public.generation_events
   for select using (auth.uid() = user_id);
+drop policy if exists "authenticated users read plan limits" on public.plan_resource_limits;
 create policy "authenticated users read plan limits" on public.plan_resource_limits
   for select using (auth.role() = 'authenticated');
 
