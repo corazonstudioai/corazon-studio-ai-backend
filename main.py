@@ -10,12 +10,14 @@ import numpy as np
 import imageio.v2 as imageio
 from PIL import Image, ImageDraw, ImageFont
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
 import fal_client
+
+from corazon.dependencies import require_generation_budget
 
 # =========================
 # CONFIG
@@ -58,14 +60,21 @@ FONT_MINIMAL = FONTS_DIR / "Inter-SemiBold.ttf"
 # =========================
 # APP
 # =========================
-app = FastAPI()
+app = FastAPI(dependencies=[Depends(require_generation_budget)])
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=[origin.strip() for origin in os.getenv("ALLOWED_ORIGINS", "https://corazonstudioai.github.io").split(",") if origin.strip()],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.exception_handler(Exception)
+async def friendly_error_handler(request: Request, exc: Exception):
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "No pudimos completar tu solicitud en este momento. Intenta nuevamente."},
+    )
 
 # =========================
 # MODELS
@@ -432,12 +441,12 @@ async def reels_voice(req: ReelsVoiceRequest, request: Request):
 @app.post("/video-cine")
 def video_cine(req: VideoRequest, request: Request):
     if not os.getenv("FAL_KEY"):
-        return {"status": "error", "message": "FAL_KEY no configurada"}
+        raise HTTPException(status_code=503, detail="El servicio de video no está disponible en este momento.")
     handler = fal_client.submit(VIDEO_MODEL_CINE, arguments={"prompt": req.text, "duration": req.duration})
     result = handler.get()
     video_url = (result.get("video", {}) or {}).get("url") or (result.get("videos", [{}])[0] or {}).get("url")
     if not video_url:
-        return {"status": "error", "message": "No se obtuvo video_url", "raw": result}
+        raise HTTPException(status_code=502, detail="No pudimos crear el video en este momento.")
     return {"status": "ok", "video_url": video_url}
 
 # =========================
@@ -446,15 +455,15 @@ def video_cine(req: VideoRequest, request: Request):
 @app.post("/video-cine-voice")
 async def video_cine_voice(req: CineVoiceRequest, request: Request):
     if not os.getenv("FAL_KEY"):
-        return {"status": "error", "message": "FAL_KEY no configurada"}
+        raise HTTPException(status_code=503, detail="El servicio de video no está disponible en este momento.")
     if not OPENAI_API_KEY:
-        return {"status": "error", "message": "OPENAI_API_KEY no configurada"}
+        raise HTTPException(status_code=503, detail="El servicio de voz no está disponible en este momento.")
 
     handler = fal_client.submit(VIDEO_MODEL_CINE, arguments={"prompt": req.text, "duration": req.duration})
     result = handler.get()
     src_video_url = (result.get("video", {}) or {}).get("url") or (result.get("videos", [{}])[0] or {}).get("url")
     if not src_video_url:
-        return {"status": "error", "message": "No se obtuvo video_url", "raw": result}
+        raise HTTPException(status_code=502, detail="No pudimos crear el video en este momento.")
 
     base_name = f"cine_{uuid.uuid4().hex}.mp4"
     base_path = file_path(base_name)
@@ -479,6 +488,4 @@ async def video_cine_voice(req: CineVoiceRequest, request: Request):
     mux_video_audio(base_path, voice_path, music_path, out_path)
 
     final_url = absolute_url(request, f"/files/{out_name}")
-    print("✅ /video-cine-voice OK:", {"video_url": final_url, "filename": out_name, "src_video_url": src_video_url})
-
     return {"status": "ok", "video_url": final_url, "filename": out_name, "src_video_url": src_video_url}

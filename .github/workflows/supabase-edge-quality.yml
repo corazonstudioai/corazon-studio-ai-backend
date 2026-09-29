@@ -1,0 +1,19 @@
+name: Supabase Edge quality
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  edge-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - run: deno test supabase/functions/_shared/video_test.ts
+      - run: deno check supabase/functions/video-start/index.ts supabase/functions/video-status/index.ts
