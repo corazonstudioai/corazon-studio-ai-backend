@@ -1,0 +1,62 @@
+name: Deploy Supabase Edge
+
+on:
+  push:
+    branches: [architecture/supabase-edge-video]
+    paths:
+      - "supabase/**"
+      - ".github/workflows/deploy-supabase-edge.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-supabase-edge-production
+  cancel-in-progress: false
+
+jobs:
+  verify-and-deploy:
+    runs-on: ubuntu-latest
+    environment: supabase-production
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_PROJECT_REF: wtfkhpwymdqbskrwecps
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Test Edge Functions
+        run: |
+          deno test supabase/functions/_shared/video_test.ts
+          deno check supabase/functions/video-start/index.ts supabase/functions/video-status/index.ts
+
+      - name: Verify deployment credential
+        run: test -n "$SUPABASE_ACCESS_TOKEN"
+
+      - name: Apply database migrations
+        shell: bash
+        run: |
+          set -euo pipefail
+          for migration in supabase/migrations/*.sql; do
+            payload="$(jq -n --rawfile query "$migration" '{query: $query, read_only: false}')"
+            curl --fail-with-body --silent --show-error \
+              --request POST \
+              --header "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+              --header "Content-Type: application/json" \
+              --data "$payload" \
+              "https://api.supabase.com/v1/projects/$SUPABASE_PROJECT_REF/database/query" \
+              >/dev/null
+          done
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Deploy video functions
+        run: |
+          supabase functions deploy video-start --project-ref "$SUPABASE_PROJECT_REF" --use-api
+          supabase functions deploy video-status --project-ref "$SUPABASE_PROJECT_REF" --use-api
