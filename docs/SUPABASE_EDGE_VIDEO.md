@@ -9,3 +9,8 @@ Render is not used by these functions.
 Required Supabase secret: `FAL_KEY`. Never commit it.
 
 Deploy only after migrations 001 and 002 are applied. Both functions require a verified Supabase JWT.
+
+The `Deploy Supabase Edge` GitHub Actions workflow tests the functions, applies the
+idempotent migrations through the scoped Management API, and deploys both functions.
+It reads `SUPABASE_ACCESS_TOKEN` only from GitHub Actions secrets. The token is never
+stored in the repository or printed by the workflow.
