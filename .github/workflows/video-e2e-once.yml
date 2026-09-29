@@ -1,0 +1,141 @@
+name: Video end-to-end test
+
+on:
+  push:
+    branches: [architecture/supabase-edge-video]
+    paths: [.github/workflows/video-e2e-once.yml]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: video-e2e-test
+  cancel-in-progress: false
+
+jobs:
+  video-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_PROJECT_REF: wtfkhpwymdqbskrwecps
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Create temporary authenticated test helper
+        shell: bash
+        run: |
+          set -euo pipefail
+          helper="video-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          echo "HELPER_NAME=$helper" >> "$GITHUB_ENV"
+          mkdir -p "supabase/functions/$helper"
+          cp supabase/functions/_shared/video.ts "supabase/functions/$helper/video.ts"
+          cat > "supabase/functions/$helper/index.ts" <<'DENO'
+          import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+          const respond = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
+            status,
+            headers: { "content-type": "application/json" },
+          });
+
+          Deno.serve(async (request) => {
+            const url = Deno.env.get("SUPABASE_URL")!;
+            const anonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
+            const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+            const service = createClient(url, serviceKey);
+            const body = await request.json().catch(() => ({}));
+
+            if (body.action === "create") {
+              const suffix = crypto.randomUUID();
+              const email = `video-e2e-${suffix}@example.invalid`;
+              const password = `${crypto.randomUUID()}Aa1!`;
+              const created = await service.auth.admin.createUser({ email, password, email_confirm: true });
+              if (created.error || !created.data.user) return respond({ error: "create_failed" }, 500);
+              const client = createClient(url, anonKey);
+              const signed = await client.auth.signInWithPassword({ email, password });
+              if (signed.error || !signed.data.session) {
+                await service.auth.admin.deleteUser(created.data.user.id);
+                return respond({ error: "signin_failed" }, 500);
+              }
+              return respond({ user_id: created.data.user.id, access_token: signed.data.session.access_token });
+            }
+
+            if (body.action === "verify" && typeof body.user_id === "string") {
+              const account = await service.from("billing_accounts")
+                .select("free_credits_total,free_credits_used").eq("user_id", body.user_id).single();
+              const event = await service.from("generation_events")
+                .select("status,credits_charged,estimated_cost_usd,engine")
+                .eq("user_id", body.user_id).order("created_at", { ascending: false }).limit(1).single();
+              if (account.error || event.error) return respond({ error: "verify_failed" }, 500);
+              return respond({ account: account.data, event: event.data });
+            }
+
+            if (body.action === "cleanup" && typeof body.user_id === "string") {
+              const deleted = await service.auth.admin.deleteUser(body.user_id);
+              return deleted.error ? respond({ error: "cleanup_failed" }, 500) : respond({ cleaned: true });
+            }
+            return respond({ error: "invalid_action" }, 400);
+          });
+          DENO
+          supabase functions deploy "$helper" --project-ref "$SUPABASE_PROJECT_REF" --use-api --no-verify-jwt
+
+      - name: Generate and verify a complete video
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="https://${SUPABASE_PROJECT_REF}.supabase.co/functions/v1"
+          helper_url="$base/$HELPER_NAME"
+          session="$(curl --fail-with-body --silent --show-error \
+            --header 'content-type: application/json' --data '{"action":"create"}' "$helper_url")"
+          user_id="$(jq -er '.user_id' <<<"$session")"
+          access_token="$(jq -er '.access_token' <<<"$session")"
+          cleanup() {
+            curl --silent --show-error --header 'content-type: application/json' \
+              --data "$(jq -n --arg user_id "$user_id" '{action:"cleanup",user_id:$user_id}')" \
+              "$helper_url" >/dev/null || true
+          }
+          trap cleanup EXIT
+
+          request_id="$(cat /proc/sys/kernel/random/uuid)"
+          start_body="$(jq -n --arg id "$request_id" '{prompt:"A peaceful sunrise over green mountains, cinematic, gentle camera movement, no people",duration:5,idempotency_key:$id}')"
+          started="$(curl --fail-with-body --silent --show-error \
+            --header "Authorization: Bearer $access_token" \
+            --header 'content-type: application/json' --data "$start_body" "$base/video-start")"
+          job_id="$(jq -er '.job_id' <<<"$started")"
+
+          completed=""
+          for attempt in $(seq 1 60); do
+            status="$(curl --fail-with-body --silent --show-error \
+              --header "Authorization: Bearer $access_token" \
+              --header 'content-type: application/json' \
+              --data "$(jq -n --arg job_id "$job_id" '{job_id:$job_id}')" "$base/video-status")"
+            state="$(jq -er '.status' <<<"$status")"
+            if [[ "$state" == "completed" ]]; then completed="$status"; break; fi
+            if [[ "$state" == "failed" ]]; then echo 'Video provider reported failure.'; exit 1; fi
+            sleep 10
+          done
+          test -n "$completed"
+          video_url="$(jq -er '.video_url' <<<"$completed")"
+          curl --fail --silent --show-error --location --range 0-1023 "$video_url" --output video-sample.bin
+          test -s video-sample.bin
+
+          verification="$(curl --fail-with-body --silent --show-error \
+            --header 'content-type: application/json' \
+            --data "$(jq -n --arg user_id "$user_id" '{action:"verify",user_id:$user_id}')" "$helper_url")"
+          jq -e '.account.free_credits_total == 5 and .account.free_credits_used == 1 and .event.status == "succeeded" and .event.credits_charged == 1' \
+            <<<"$verification" >/dev/null
+          echo 'Video E2E completed: file downloaded and one persistent credit charged.'
+
+      - name: Remove temporary helper
+        if: always()
+        shell: bash
+        run: |
+          if [[ -n "${HELPER_NAME:-}" ]]; then
+            curl --fail-with-body --silent --show-error --request DELETE \
+              --header "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+              "https://api.supabase.com/v1/projects/$SUPABASE_PROJECT_REF/functions/$HELPER_NAME" \
+              >/dev/null
+          fi
