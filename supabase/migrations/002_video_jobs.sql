@@ -23,6 +23,7 @@ create index if not exists video_jobs_user_created_idx
 
 alter table public.video_jobs enable row level security;
 
+drop policy if exists "users read own video jobs" on public.video_jobs;
 create policy "users read own video jobs" on public.video_jobs
   for select using (auth.uid() = user_id);
 
