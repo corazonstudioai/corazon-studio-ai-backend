@@ -1,5 +1,4 @@
 const ALLOWED_ORIGINS = new Set([
-const ALLOWED_ORIGINS = new Set([
   "https://corazonstudioai.github.io",
   "https://corazon-studio-ai-web.pages.dev",
   "http://localhost:3000",
