@@ -1,5 +1,9 @@
 const ALLOWED_ORIGINS = new Set([
+const ALLOWED_ORIGINS = new Set([
   "https://corazonstudioai.github.io",
+  "https://corazon-studio-ai-web.pages.dev",
+  "http://localhost:3000",
+  "http://127.0.0.1:3000",
   "http://localhost:8000",
   "http://127.0.0.1:8000",
 ]);
@@ -13,7 +17,7 @@ function corsHeaders(request) {
       ? origin
       : "https://corazonstudioai.github.io",
     "access-control-allow-methods": "GET, POST, OPTIONS",
-    "access-control-allow-headers": "Content-Type",
+    "access-control-allow-headers": "Authorization, Content-Type, Idempotency-Key",
     "access-control-max-age": "86400",
     vary: "Origin",
   };
