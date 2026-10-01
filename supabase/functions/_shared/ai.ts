@@ -98,7 +98,12 @@ export async function finalize(
   reservationId: string,
   success: boolean,
 ) {
-  await service.rpc("finalize_generation", {
+  const rpc = service.rpc as unknown as (
+    name: string,
+    args: Record<string, unknown>,
+  ) => Promise<unknown>;
+
+  await rpc("finalize_generation", {
     p_reservation_id: reservationId,
     p_success: success,
   });
