@@ -1,6 +1,10 @@
 export const allowedOrigins = new Set([
   "https://corazonstudioai.github.io",
   "http://localhost:5173",
+  "http://localhost:3000",
+  "http://127.0.0.1:3000",
+  "http://localhost:8000",
+  "http://127.0.0.1:8000",
 ]);
 
 export function corsHeaders(origin: string | null) {
@@ -9,7 +13,8 @@ export function corsHeaders(origin: string | null) {
     : "https://corazonstudioai.github.io";
   return {
     "Access-Control-Allow-Origin": selected,
-    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+    "Access-Control-Allow-Headers":
+      "authorization, x-client-info, apikey, content-type",
     "Access-Control-Allow-Methods": "POST, OPTIONS",
     "Vary": "Origin",
   };
@@ -23,9 +28,14 @@ export function parseVideoRequest(value: unknown) {
   const idempotencyKey = typeof body.idempotency_key === "string"
     ? body.idempotency_key
     : crypto.randomUUID();
-  if (prompt.length < 3 || prompt.length > 1500) throw new Error("invalid_prompt");
+  if (prompt.length < 3 || prompt.length > 1500) {
+    throw new Error("invalid_prompt");
+  }
   if (![5, 10].includes(duration)) throw new Error("invalid_duration");
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(idempotencyKey)) {
+  if (
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+      .test(idempotencyKey)
+  ) {
     throw new Error("invalid_idempotency_key");
   }
   return { prompt, duration, idempotencyKey };
