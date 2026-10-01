@@ -94,16 +94,15 @@ export async function authenticateAndReserve(
 }
 
 export async function finalize(
-  service: ReturnType<typeof createClient>,
+  service: unknown,
   reservationId: string,
   success: boolean,
 ) {
-  const rpc = service.rpc as unknown as (
-    name: string,
-    args: Record<string, unknown>,
-  ) => Promise<unknown>;
+  const client = service as {
+    rpc: (name: string, args: Record<string, unknown>) => Promise<unknown>;
+  };
 
-  await rpc("finalize_generation", {
+  await client.rpc("finalize_generation", {
     p_reservation_id: reservationId,
     p_success: success,
   });
