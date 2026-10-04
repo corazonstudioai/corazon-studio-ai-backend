@@ -156,6 +156,8 @@ Deno.serve(async (request) => {
       status_url: queued.status_url,
       response_url: queued.response_url,
       duration_seconds: input.duration,
+      narration_text: input.narration,
+      voice: input.voice,
     }).select("id,status").single();
 
   if (jobError || !job) {

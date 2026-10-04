@@ -2,7 +2,12 @@ import {
   assertEquals,
   assertThrows,
 } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { corsHeaders, extractVideoUrl, parseVideoRequest } from "./video.ts";
+import {
+  corsHeaders,
+  extractVideoUrl,
+  narrationForDuration,
+  parseVideoRequest,
+} from "./video.ts";
 
 Deno.test("validates video request", () => {
   const id = "123e4567-e89b-42d3-a456-426614174000";
@@ -16,6 +21,8 @@ Deno.test("validates video request", () => {
       prompt: "Un amanecer",
       duration: 5,
       idempotencyKey: id,
+      narration: "Un amanecer",
+      voice: "nova",
     },
   );
   assertThrows(() => parseVideoRequest({ prompt: "x", duration: 5 }));
@@ -40,4 +47,12 @@ Deno.test("advertises every supported CORS method", () => {
     corsHeaders("https://corazonstudioai.github.io")["Access-Control-Allow-Methods"],
     "GET, POST, OPTIONS",
   );
+});
+
+Deno.test("prepares narration that fits the video duration", () => {
+  assertEquals(
+    narrationForDuration("uno dos tres cuatro cinco seis siete ocho nueve diez once doce trece", 5),
+    "uno dos tres cuatro cinco seis siete ocho nueve diez once doce…",
+  );
+  assertEquals(narrationForDuration("Mensaje breve", 10), "Mensaje breve");
 });
