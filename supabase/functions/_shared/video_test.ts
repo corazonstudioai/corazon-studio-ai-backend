@@ -2,7 +2,7 @@ import {
   assertEquals,
   assertThrows,
 } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { extractVideoUrl, parseVideoRequest } from "./video.ts";
+import { corsHeaders, extractVideoUrl, parseVideoRequest } from "./video.ts";
 
 Deno.test("validates video request", () => {
   const id = "123e4567-e89b-42d3-a456-426614174000";
@@ -32,4 +32,12 @@ Deno.test("extracts fal video response", () => {
     "https://example.com/other.mp4",
   );
   assertEquals(extractVideoUrl({}), null);
+});
+
+
+Deno.test("advertises every supported CORS method", () => {
+  assertEquals(
+    corsHeaders("https://corazonstudioai.github.io")["Access-Control-Allow-Methods"],
+    "GET, POST, OPTIONS",
+  );
 });

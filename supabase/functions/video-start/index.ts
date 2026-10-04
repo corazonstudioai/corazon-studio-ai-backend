@@ -106,14 +106,26 @@ Deno.serve(async (request) => {
     }, 202);
   }
 
-  const falResponse = await fetch(`https://queue.fal.run/${model}`, {
-    method: "POST",
-    headers: {
-      "Authorization": `Key ${falKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ prompt: input.prompt, duration: input.duration }),
-  });
+  let falResponse: Response;
+  try {
+    falResponse = await fetch(`https://queue.fal.run/${model}`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Key ${falKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ prompt: input.prompt, duration: input.duration }),
+      signal: AbortSignal.timeout(30_000),
+    });
+  } catch {
+    await service.rpc("finalize_generation", {
+      p_reservation_id: reservation.reservation_id,
+      p_success: false,
+    });
+    return json(origin, {
+      message: "El motor de video tardó demasiado. Tus créditos fueron devueltos.",
+    }, 504);
+  }
   if (!falResponse.ok) {
     await service.rpc("finalize_generation", {
       p_reservation_id: reservation.reservation_id,
@@ -147,8 +159,12 @@ Deno.serve(async (request) => {
     }).select("id,status").single();
 
   if (jobError || !job) {
+    await service.rpc("finalize_generation", {
+      p_reservation_id: reservation.reservation_id,
+      p_success: false,
+    });
     return json(origin, {
-      message: "El video inició, pero no pudimos guardar su seguimiento.",
+      message: "El video inició, pero no pudimos guardar su seguimiento. Tus créditos fueron devueltos.",
     }, 500);
   }
   return json(origin, {

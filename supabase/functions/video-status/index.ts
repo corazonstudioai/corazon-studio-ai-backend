@@ -56,9 +56,18 @@ Deno.serve(async (request) => {
     });
   }
 
-  const providerStatus = await fetch(job.status_url, {
-    headers: { "Authorization": `Key ${falKey}` },
-  });
+  let providerStatus: Response;
+  try {
+    providerStatus = await fetch(job.status_url, {
+      headers: { "Authorization": `Key ${falKey}` },
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch {
+    return json(origin, {
+      status: job.status,
+      message: "El video sigue procesándose.",
+    }, 202);
+  }
   if (!providerStatus.ok) {
     return json(origin, {
       status: job.status,
@@ -78,10 +87,16 @@ Deno.serve(async (request) => {
   }
 
   if (falStatus === "COMPLETED") {
-    const resultResponse = await fetch(job.response_url, {
-      headers: { "Authorization": `Key ${falKey}` },
-    });
-    const result = resultResponse.ok ? await resultResponse.json() : null;
+    let result: unknown = null;
+    try {
+      const resultResponse = await fetch(job.response_url, {
+        headers: { "Authorization": `Key ${falKey}` },
+        signal: AbortSignal.timeout(15_000),
+      });
+      result = resultResponse.ok ? await resultResponse.json() : null;
+    } catch {
+      result = null;
+    }
     const videoUrl = extractVideoUrl(result);
     if (videoUrl) {
       await service.from("video_jobs").update({

@@ -15,7 +15,7 @@ export function corsHeaders(origin: string | null) {
     "Access-Control-Allow-Origin": selected,
     "Access-Control-Allow-Headers":
       "authorization, x-client-info, apikey, content-type",
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
     "Vary": "Origin",
   };
 }
