@@ -2,7 +2,7 @@ name: Deploy Supabase Edge
 
 on:
   push:
-    branches: [architecture/supabase-edge-video]
+    branches: [main]
     paths:
       - "supabase/**"
       - ".github/workflows/deploy-supabase-edge.yml"
