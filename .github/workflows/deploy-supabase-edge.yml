@@ -31,8 +31,14 @@ jobs:
 
       - name: Test Edge Functions
         run: |
-          deno test supabase/functions/_shared/video_test.ts
-          deno check supabase/functions/video-start/index.ts supabase/functions/video-status/index.ts
+          deno test supabase/functions/_shared/video_test.ts supabase/functions/_shared/ai_test.ts
+          deno check \
+            supabase/functions/health/index.ts \
+            supabase/functions/chat/index.ts \
+            supabase/functions/image/index.ts \
+            supabase/functions/tts/index.ts \
+            supabase/functions/video-start/index.ts \
+            supabase/functions/video-status/index.ts
 
       - name: Verify deployment credential
         run: test -n "$SUPABASE_ACCESS_TOKEN"
@@ -56,7 +62,11 @@ jobs:
         with:
           version: latest
 
-      - name: Deploy video functions
+      - name: Deploy Edge Functions
         run: |
+          supabase functions deploy health --project-ref "$SUPABASE_PROJECT_REF" --use-api --no-verify-jwt
+          supabase functions deploy chat --project-ref "$SUPABASE_PROJECT_REF" --use-api
+          supabase functions deploy image --project-ref "$SUPABASE_PROJECT_REF" --use-api
+          supabase functions deploy tts --project-ref "$SUPABASE_PROJECT_REF" --use-api
           supabase functions deploy video-start --project-ref "$SUPABASE_PROJECT_REF" --use-api
           supabase functions deploy video-status --project-ref "$SUPABASE_PROJECT_REF" --use-api

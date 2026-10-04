@@ -15,5 +15,12 @@ jobs:
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
-      - run: deno test supabase/functions/_shared/video_test.ts
-      - run: deno check supabase/functions/video-start/index.ts supabase/functions/video-status/index.ts
+      - run: deno test supabase/functions/_shared/video_test.ts supabase/functions/_shared/ai_test.ts
+      - run: |
+          deno check \
+            supabase/functions/health/index.ts \
+            supabase/functions/chat/index.ts \
+            supabase/functions/image/index.ts \
+            supabase/functions/tts/index.ts \
+            supabase/functions/video-start/index.ts \
+            supabase/functions/video-status/index.ts
