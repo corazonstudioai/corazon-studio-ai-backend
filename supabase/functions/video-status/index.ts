@@ -14,7 +14,7 @@ function json(origin: string | null, body: unknown, status = 200) {
   });
 }
 
-async function markFailed(service: ReturnType<typeof createClient>, job: Record<string, unknown>, code: string) {
+async function markFailed(service: any, job: Record<string, any>, code: string) {
   await service.from("video_jobs").update({
     status: "failed",
     error_code: code,
@@ -28,7 +28,7 @@ async function markFailed(service: ReturnType<typeof createClient>, job: Record<
 }
 
 async function queueAudioMerge(
-  job: Record<string, unknown>,
+  job: Record<string, any>,
   videoUrl: string,
   falKey: string,
   openAiKey: string,
