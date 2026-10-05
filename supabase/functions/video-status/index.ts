@@ -131,6 +131,19 @@ Deno.serve(async (request) => {
     });
   }
 
+  // A provider request can expire or stop returning a useful state. Never leave
+  // the user trapped in an endless "in progress" loop: close stale jobs and
+  // release their reserved credits.
+  const createdAt = Date.parse(String(job.created_at || ""));
+  const maxJobAgeMs = 20 * 60 * 1000;
+  if (Number.isFinite(createdAt) && Date.now() - createdAt > maxJobAgeMs) {
+    await markFailed(service, job, "job_timeout");
+    return json(origin, {
+      status: "failed",
+      message: "La solicitud anterior venció y fue cerrada. Tus créditos fueron devueltos; puedes crear un video nuevo.",
+    });
+  }
+
   const pollingMerge = Boolean(job.merge_request_id);
   const statusUrl = pollingMerge ? job.merge_status_url : job.status_url;
   let providerStatus: Response;
