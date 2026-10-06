@@ -2,7 +2,7 @@ name: Video end-to-end test
 
 on:
   push:
-    branches: [architecture/supabase-edge-video]
+    branches: [test/video-audio-e2e-20261006]
     paths: [.github/workflows/video-e2e-once.yml]
 
 permissions:
@@ -100,7 +100,7 @@ jobs:
           trap cleanup EXIT
 
           request_id="$(cat /proc/sys/kernel/random/uuid)"
-          start_body="$(jq -n --arg id "$request_id" '{prompt:"A peaceful sunrise over green mountains, cinematic, gentle camera movement, no people",duration:5,idempotency_key:$id}')"
+          start_body="$(jq -n --arg id "$request_id" '{prompt:"A peaceful sunrise over green mountains, cinematic, gentle camera movement, no people",narration:"Cada mañana es una nueva oportunidad para comenzar.",voice:"nova",duration:5,idempotency_key:$id}')"
           started="$(curl --fail-with-body --silent --show-error \
             --header "Authorization: Bearer $access_token" \
             --header 'content-type: application/json' --data "$start_body" "$base/video-start")"
@@ -119,8 +119,10 @@ jobs:
           done
           test -n "$completed"
           video_url="$(jq -er '.video_url' <<<"$completed")"
-          curl --fail --silent --show-error --location --range 0-1023 "$video_url" --output video-sample.bin
-          test -s video-sample.bin
+          jq -e '.has_audio == true' <<<"$completed" >/dev/null
+          curl --fail --silent --show-error --location "$video_url" --output video-sample.mp4
+          test -s video-sample.mp4
+          ffprobe -v error -select_streams a:0 -show_entries stream=codec_type -of csv=p=0 video-sample.mp4 | grep -qx audio
 
           verification="$(curl --fail-with-body --silent --show-error \
             --header 'content-type: application/json' \
