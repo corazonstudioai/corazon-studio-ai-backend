@@ -68,8 +68,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -n "$FAL_KEY"
-          test -n "$OPENAI_API_KEY"
+          missing=0
+          if [[ -z "$FAL_KEY" ]]; then echo "::error::Falta el secreto FAL_KEY en GitHub Actions."; missing=1; fi
+          if [[ -z "$OPENAI_API_KEY" ]]; then echo "::error::Falta el secreto OPENAI_API_KEY en GitHub Actions."; missing=1; fi
+          test "$missing" -eq 0
           supabase secrets set FAL_KEY="$FAL_KEY" OPENAI_API_KEY="$OPENAI_API_KEY" --project-ref "$SUPABASE_PROJECT_REF"
 
       - name: Deploy Edge Functions
