@@ -22,6 +22,8 @@ jobs:
     env:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
       SUPABASE_PROJECT_REF: wtfkhpwymdqbskrwecps
+      FAL_KEY: ${{ secrets.FAL_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
     steps:
       - uses: actions/checkout@v4
 
@@ -61,6 +63,14 @@ jobs:
       - uses: supabase/setup-cli@v1
         with:
           version: latest
+
+      - name: Synchronize provider secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$FAL_KEY"
+          test -n "$OPENAI_API_KEY"
+          supabase secrets set FAL_KEY="$FAL_KEY" OPENAI_API_KEY="$OPENAI_API_KEY" --project-ref "$SUPABASE_PROJECT_REF"
 
       - name: Deploy Edge Functions
         run: |
