@@ -4,9 +4,10 @@ import {
   corsHeaders,
   extractVideoUrl,
   narrationForDuration,
+  videoAudioTimeline,
 } from "../_shared/video.ts";
 
-const MERGE_MODEL = "fal-ai/ffmpeg-api/merge-audio-video";
+const MERGE_MODEL = "fal-ai/ffmpeg-api/compose";
 
 function json(origin: string | null, body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -68,11 +69,7 @@ async function queueAudioMerge(
       "Authorization": `Key ${falKey}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      video_url: videoUrl,
-      audio_url: audioUrl,
-      start_offset: 0,
-    }),
+    body: JSON.stringify(videoAudioTimeline(videoUrl, audioUrl, Number(job.duration_seconds))),
     signal: AbortSignal.timeout(30_000),
   });
   if (!mergeResponse.ok) throw new Error("merge_start_failed");

@@ -61,6 +61,7 @@ export function narrationForDuration(text: string, duration: number) {
 export function extractVideoUrl(payload: unknown): string | null {
   if (!payload || typeof payload !== "object") return null;
   const data = payload as Record<string, unknown>;
+  if (typeof data.video_url === "string") return data.video_url;
   const video = data.video as Record<string, unknown> | undefined;
   if (typeof video?.url === "string") return video.url;
   const videos = data.videos;
@@ -69,4 +70,14 @@ export function extractVideoUrl(payload: unknown): string | null {
     if (typeof first?.url === "string") return first.url;
   }
   return null;
+}
+
+// A separate visual timeline keeps short speech from truncating the video.
+export function videoAudioTimeline(videoUrl: string, audioUrl: string, durationSeconds: number) {
+  if (![5, 10].includes(durationSeconds)) throw new Error("invalid_duration");
+  const duration = durationSeconds * 1000;
+  return { tracks: [
+    { id: "visual", type: "video", keyframes: [{ url: videoUrl, timestamp: 0, duration }] },
+    { id: "narration", type: "audio", keyframes: [{ url: audioUrl, timestamp: 0, duration }] },
+  ] };
 }

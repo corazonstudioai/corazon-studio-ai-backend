@@ -7,6 +7,7 @@ import {
   extractVideoUrl,
   narrationForDuration,
   parseVideoRequest,
+  videoAudioTimeline,
 } from "./video.ts";
 
 Deno.test("validates video request", () => {
@@ -55,4 +56,15 @@ Deno.test("prepares narration that fits the video duration", () => {
     "uno dos tres cuatro cinco seis siete ocho nueve diez once doce…",
   );
   assertEquals(narrationForDuration("Mensaje breve", 10), "Mensaje breve");
+});
+
+Deno.test("composition preserves the visual timeline with short narration", () => {
+  const body=videoAudioTimeline("https://example.com/visual.mp4","data:audio/mpeg;base64,YQ==",5);
+  assertEquals(body.tracks[0].type,"video");
+  assertEquals(body.tracks[0].keyframes[0].duration,5000);
+  assertEquals(body.tracks[1].keyframes[0].timestamp,0);
+  assertEquals(body.tracks[1].keyframes[0].url,"data:audio/mpeg;base64,YQ==");
+  assertEquals(videoAudioTimeline("video","audio",10).tracks[0].keyframes[0].duration,10000);
+  assertThrows(()=>videoAudioTimeline("video","audio",7));
+  assertEquals(extractVideoUrl({video_url:"https://example.com/compose.mp4"}),"https://example.com/compose.mp4");
 });
