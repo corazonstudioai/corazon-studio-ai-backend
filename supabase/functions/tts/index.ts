@@ -1,14 +1,15 @@
+import { replayResult, saveMediaResult } from "../_shared/results.ts";
 import { corsHeaders } from "../_shared/video.ts";
 import { parseSpeechRequest } from "../_shared/content.ts";
 import {
   authenticateAndReserve,
-  bytesToBase64,
   failureResponse,
   finalize,
   isUnsafe,
   json,
   openAi,
   requestId,
+  hashRequest,
 } from "../_shared/ai.ts";
 
 Deno.serve(async (request) => {
@@ -23,7 +24,8 @@ Deno.serve(async (request) => {
   let service;
   let reservationId = "";
   try {
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body !== "object" || Array.isArray(body)) throw new Error("invalid_request");
     const { text, voice, instructions } = parseSpeechRequest(body);
     if (isUnsafe(text)) {
       return json(origin, {
@@ -40,7 +42,10 @@ Deno.serve(async (request) => {
         minutes,
       engine: model,
       idempotencyKey: requestId(body.idempotency_key),
+      requestHash: await hashRequest(body),
     });
+    const replay = await replayResult(reserved.service, reserved.reservation);
+    if (replay) return json(origin, { ...replay, credits_remaining: reserved.reservation.credits_remaining });
     service = reserved.service;
     reservationId = reserved.reservation.reservation_id;
 
@@ -58,15 +63,13 @@ Deno.serve(async (request) => {
     if (!response.ok) throw new Error("provider_error");
     const bytes = new Uint8Array(await response.arrayBuffer());
     if (!bytes.length) throw new Error("provider_error");
-    const audio = bytesToBase64(bytes);
-    await finalize(service, reservationId, true);
-    return json(origin, {
-      status: "ok",
-      audio_url: `data:audio/mpeg;base64,${audio}`,
-      credits_remaining: reserved.reservation.credits_remaining,
-    });
+    const output = await saveMediaResult(service, reservationId, "audio_url", bytes, "audio/mpeg");
+    return json(origin, { ...output, credits_remaining: reserved.reservation.credits_remaining });
   } catch (error) {
-    if (service && reservationId) await finalize(service, reservationId, false);
+    if (service && reservationId) {
+      try { await finalize(service, reservationId, false); }
+      catch { return failureResponse(origin, new Error("billing_unavailable")); }
+    }
     return failureResponse(origin, error);
   }
 });

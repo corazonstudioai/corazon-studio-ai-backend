@@ -14,17 +14,17 @@ function json(origin: string | null, body: unknown, status = 200) {
   });
 }
 
-async function markFailed(service: any, job: Record<string, any>, code: string) {
-  await service.from("video_jobs").update({
-    status: "failed",
-    error_code: code,
-    updated_at: new Date().toISOString(),
-    completed_at: new Date().toISOString(),
-  }).eq("id", job.id);
-  await service.rpc("finalize_generation", {
-    p_reservation_id: job.reservation_id,
-    p_success: false,
-  });
+async function settleVideo(service: any, job: Record<string, any>, origin: string | null, success: boolean, videoUrl: string | null = null, code: string | null = null) {
+  const { data, error } = await service.rpc("settle_video_job", { p_job_id: job.id, p_success: success, p_video_url: videoUrl, p_error_code: code });
+  if (error || !data) return json(origin, { message: "No pudimos confirmar el estado final y los créditos del video." }, 503);
+  return json(origin, { ...data, ...(data.status === "failed" ? { message: "No pudimos completar el video. Tu crédito fue devuelto." } : {}) });
+}
+
+function queueUrl(value: unknown) {
+  if (typeof value !== "string") throw new Error("invalid_provider_url");
+  const url = new URL(value);
+  if (url.protocol !== "https:" || url.hostname !== "queue.fal.run" || url.username || url.password) throw new Error("invalid_provider_url");
+  return url.href;
 }
 
 async function queueAudioMerge(
@@ -79,6 +79,8 @@ async function queueAudioMerge(
   if (!queued.request_id || !queued.status_url || !queued.response_url) {
     throw new Error("merge_start_invalid");
   }
+  queueUrl(queued.status_url);
+  queueUrl(queued.response_url);
   return queued;
 }
 
@@ -118,18 +120,14 @@ Deno.serve(async (request) => {
   }
 
   const service = createClient(url, serviceKey);
-  const { data: job } = await service.from("video_jobs").select("*")
+  const { data: job, error: jobError } = await service.from("video_jobs").select("*")
     .eq("id", jobId).eq("user_id", userData.user.id).maybeSingle();
+  if (jobError) return json(origin, { message: "No pudimos consultar el seguimiento del video." }, 503);
   if (!job) return json(origin, { message: "No encontramos ese video." }, 404);
   if (job.status === "completed") {
-    return json(origin, { status: "completed", video_url: job.video_url, has_audio: true });
+    return settleVideo(service, job, origin, true, job.video_url);
   }
-  if (job.status === "failed") {
-    return json(origin, {
-      status: "failed",
-      message: "No pudimos completar el video con sonido. Tus créditos fueron devueltos.",
-    });
-  }
+  if (job.status === "failed") return settleVideo(service, job, origin, false, null, job.error_code);
 
   // A provider request can expire or stop returning a useful state. Never leave
   // the user trapped in an endless "in progress" loop: close stale jobs and
@@ -137,18 +135,14 @@ Deno.serve(async (request) => {
   const createdAt = Date.parse(String(job.created_at || ""));
   const maxJobAgeMs = 20 * 60 * 1000;
   if (Number.isFinite(createdAt) && Date.now() - createdAt > maxJobAgeMs) {
-    await markFailed(service, job, "job_timeout");
-    return json(origin, {
-      status: "failed",
-      message: "La solicitud anterior venció y fue cerrada. Tus créditos fueron devueltos; puedes crear un video nuevo.",
-    });
+    return settleVideo(service, job, origin, false, null, "job_timeout");
   }
 
   const pollingMerge = Boolean(job.merge_request_id);
   const statusUrl = pollingMerge ? job.merge_status_url : job.status_url;
   let providerStatus: Response;
   try {
-    providerStatus = await fetch(String(statusUrl), {
+    providerStatus = await fetch(queueUrl(statusUrl), {
       headers: { "Authorization": `Key ${falKey}` },
       signal: AbortSignal.timeout(15_000),
     });
@@ -170,7 +164,7 @@ Deno.serve(async (request) => {
     await service.from("video_jobs").update({
       status: "in_progress",
       updated_at: new Date().toISOString(),
-    }).eq("id", job.id);
+    }).eq("id", job.id).in("status", ["queued", "in_progress"]);
     return json(origin, {
       status: "in_progress",
       stage: pollingMerge ? "adding_audio" : "generating_video",
@@ -178,18 +172,14 @@ Deno.serve(async (request) => {
   }
 
   if (["FAILED", "CANCELLED"].includes(falStatus)) {
-    await markFailed(service, job, pollingMerge ? "audio_merge_failed" : falStatus.toLowerCase());
-    return json(origin, {
-      status: "failed",
-      message: "No pudimos completar el video con sonido. Tus créditos fueron devueltos.",
-    });
+    return settleVideo(service, job, origin, false, null, pollingMerge ? "audio_merge_failed" : falStatus.toLowerCase());
   }
 
   if (falStatus === "COMPLETED") {
     const responseUrl = pollingMerge ? job.merge_response_url : job.response_url;
     let result: unknown = null;
     try {
-      const resultResponse = await fetch(String(responseUrl), {
+      const resultResponse = await fetch(queueUrl(responseUrl), {
         headers: { "Authorization": `Key ${falKey}` },
         signal: AbortSignal.timeout(15_000),
       });
@@ -203,41 +193,33 @@ Deno.serve(async (request) => {
     }
 
     if (!pollingMerge) {
+      const { data: claimed, error: claimError } = await service.from("video_jobs")
+        .update({ merge_claimed_at: new Date().toISOString() })
+        .eq("id", job.id).in("status", ["queued", "in_progress"]).is("merge_claimed_at", null).select("id");
+      if (claimError) return json(origin, { message: "No pudimos consultar la etapa de audio." }, 503);
+      if (!claimed?.length) return json(origin, { status: "in_progress", stage: "adding_audio" }, 202);
       try {
         const merge = await queueAudioMerge(job, videoUrl, falKey, openAiKey);
-        await service.from("video_jobs").update({
+        const { error: updateError } = await service.from("video_jobs").update({
           raw_video_url: videoUrl,
           merge_request_id: merge.request_id,
           merge_status_url: merge.status_url,
           merge_response_url: merge.response_url,
           status: "in_progress",
           updated_at: new Date().toISOString(),
-        }).eq("id", job.id);
+        }).eq("id", job.id).in("status", ["queued", "in_progress"]);
+        if (updateError) throw new Error("audio_tracking_failed");
         return json(origin, {
           status: "in_progress",
           stage: "adding_audio",
           message: "El video está listo; ahora estamos agregando la voz.",
         }, 202);
       } catch (error) {
-        await markFailed(service, job, String((error as Error).message || "audio_pipeline_failed"));
-        return json(origin, {
-          status: "failed",
-          message: "No pudimos agregar el sonido. Tus créditos fueron devueltos.",
-        });
+        return settleVideo(service, job, origin, false, null, String((error as Error).message || "audio_pipeline_failed"));
       }
     }
 
-    await service.from("video_jobs").update({
-      status: "completed",
-      video_url: videoUrl,
-      updated_at: new Date().toISOString(),
-      completed_at: new Date().toISOString(),
-    }).eq("id", job.id);
-    await service.rpc("finalize_generation", {
-      p_reservation_id: job.reservation_id,
-      p_success: true,
-    });
-    return json(origin, { status: "completed", video_url: videoUrl, has_audio: true });
+    return settleVideo(service, job, origin, true, videoUrl);
   }
 
   return json(origin, {

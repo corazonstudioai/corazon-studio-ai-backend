@@ -37,6 +37,12 @@ export function requestId(value: unknown) {
   return candidate;
 }
 
+export async function hashRequest(body: Record<string, unknown>) {
+  const normalized = Object.fromEntries(Object.keys(body).filter(key => key !== "idempotency_key").sort().map(key => [key, body[key]]));
+  const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(normalized)));
+  return [...new Uint8Array(bytes)].map(byte => byte.toString(16).padStart(2,"0")).join("");
+}
+
 type ReservationOptions = {
   resource: "text_requests" | "images" | "voice_minutes";
   units: number;
@@ -44,6 +50,7 @@ type ReservationOptions = {
   estimatedCost: number;
   engine: string;
   idempotencyKey: string;
+  requestHash: string;
 };
 
 export async function authenticateAndReserve(
@@ -71,7 +78,7 @@ export async function authenticateAndReserve(
 
   const service = createClient(url, serviceKey);
   const { data: rows, error: reserveError } = await service.rpc(
-    "reserve_generation",
+    "reserve_generation_v2",
     {
       p_user_id: user.id,
       p_identity_kind: identityKind,
@@ -81,6 +88,7 @@ export async function authenticateAndReserve(
       p_estimated_cost_usd: options.estimatedCost,
       p_engine: options.engine,
       p_idempotency_key: options.idempotencyKey,
+      p_request_hash: options.requestHash,
     },
   );
   const reservation = rows?.[0];
@@ -102,14 +110,23 @@ export async function finalize(
     rpc: (name: string, args: Record<string, unknown>) => Promise<unknown>;
   };
 
-  await client.rpc("finalize_generation", {
+  const result = await client.rpc("finalize_generation", {
     p_reservation_id: reservationId,
     p_success: success,
   });
+  if ((result as { error?: unknown })?.error) throw new Error("billing_unavailable");
 }
 
 export function failureResponse(origin: string | null, error: unknown) {
   const code = String((error as Error)?.message ?? error);
+  if (["generation_in_progress", "generation_already_refunded", "idempotency_conflict"].includes(code)) {
+    return json(origin, { code, message: code === "generation_in_progress"
+      ? "Tu solicitud sigue procesándose. No necesitas crearla otra vez."
+      : "Esta solicitud ya fue cerrada o cambió. Inicia una creación nueva." }, 409);
+  }
+  if (["invalid_brain_plan", "unsupported_brain_plan"].includes(code)) {
+    return json(origin, { code, message: "No pudimos preparar un plan completo para esta solicitud. No se inició la generación de archivos." }, 502);
+  }
   if (
     code === "empty_speech" || code === "speech_too_long" ||
     code === "invalid_request"
@@ -152,6 +169,7 @@ export async function openAi(path: string, init: RequestInit) {
   if (!apiKey) throw new Error("service_unavailable");
   return fetch(`https://api.openai.com/v1/${path}`, {
     ...init,
+    signal: init.signal ?? AbortSignal.timeout(path === "images/generations" ? 80_000 : 45_000),
     headers: {
       Authorization: `Bearer ${apiKey}`,
       ...(init.headers ?? {}),
