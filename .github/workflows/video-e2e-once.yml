@@ -130,6 +130,12 @@ jobs:
           hashes=[line.rsplit(',',1)[-1].strip() for line in pathlib.Path('acceptance/frames.md5').read_text().splitlines() if line and not line.startswith('#')]
           assert len(hashes)>20 and len(set(hashes))>10,'Video is static or undecodable'
           PY
+          ffmpeg -v error -i acceptance/video.mp4 -vf "fps=2,scale=160:90,tblend=all_mode=difference,signalstats,metadata=print:file=acceptance/motion.txt" -an -f null -
+          python - <<'PY'
+          import pathlib
+          values=[float(line.split('=',1)[1]) for line in pathlib.Path('acceptance/motion.txt').read_text().splitlines() if line.startswith('lavfi.signalstats.YAVG=')]
+          assert len(values)>=5 and max(values)>0.5,'No perceptible frame motion'
+          PY
           ffmpeg -hide_banner -i acceptance/video.mp4 -af volumedetect -vn -f null - 2> acceptance/audio.txt
           ! grep -q 'max_volume: -inf' acceptance/audio.txt
           verification="$(curl --fail --silent --show-error --max-time 40 -H "x-test-key: $HELPER_TOKEN" -H 'content-type: application/json' --data "$(jq -n --arg id "$user_id" '{action:"verify",user_id:$id}')" "$helper_url")"
