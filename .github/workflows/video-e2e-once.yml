@@ -1,4 +1,4 @@
-name: Authorized Brain real-provider acceptance
+name: Authorized Brain real-provider acceptance with strict schema
 on:
   push:
     branches: [architecture/supabase-edge-video]
