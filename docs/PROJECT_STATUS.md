@@ -92,3 +92,17 @@ no verificable hasta establecer y ejecutar una matriz integral. Funciones aún
 sin aceptación real: Brain, identidad/interfaz, créditos, conversación, imágenes,
 voz/dictado, video, música, subtítulos, traducción, eliminación de fondo y
 exportación. No avanzar a otro bloque mientras Brain no cierre su aceptación.
+
+## Evidencia de esta sesión
+
+- Los 29 escenarios de integración local usan los handlers reales y proveedores
+  simulados; no gastan saldo de IA.
+- El workflow de aceptación de Brain aprobó en PostgreSQL 17 aislado: reaplicación
+  de migraciones, primer uso y cuotas, cache, permisos, devolución idempotente,
+  cierre transaccional del video y ocho solicitudes simultáneas con un solo cargo.
+- Los controles Deno/tipos y las pruebas existentes del backend aprobaron en el PR.
+- El workflow de navegador móvil aprobó el recorrido real de interfaz con todas
+  las solicitudes interceptadas: cancelación, código ficticio de ocho dígitos con
+  espacios, texto, carga de audio/imagen y recuperación sin repetir el plan.
+- No se realizaron integración a main, despliegue, pruebas con cuentas personales
+  ni generación con proveedores reales. Brain sigue pendiente de esa aceptación.
