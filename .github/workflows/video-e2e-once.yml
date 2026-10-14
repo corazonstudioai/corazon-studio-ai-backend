@@ -90,7 +90,13 @@ jobs:
           access_token="$(jq -er '.access_token' <<<"$session")"
           echo "::add-mask::$access_token"
           echo "TEST_USER_ID=$user_id" >> "$GITHUB_ENV"
-          call() { curl --fail-with-body --silent --show-error --max-time 100 -H "Authorization: Bearer $access_token" -H 'content-type: application/json' --data "$2" "$base/$1"; }
+          call() {
+            local response code
+            response="$(mktemp)"
+            code="$(curl --silent --show-error --max-time 100 -o "$response" -w '%{http_code}' -H "Authorization: Bearer $access_token" -H 'content-type: application/json' --data "$2" "$base/$1")"
+            if [[ "$code" != 2* ]]; then echo "Endpoint $1 failed HTTP $code" >&2; jq '{code,message}' "$response" >&2; rm "$response"; return 1; fi
+            cat "$response"; rm "$response"
+          }
           plan_id="$(cat /proc/sys/kernel/random/uuid)"
           plan_body="$(jq -n --arg id "$plan_id" '{purpose:"brain",message:"Crea un video de cinco segundos de un amanecer sobre montañas verdes, con nubes moviéndose y un movimiento suave de cámara. Añade una narración corta: Dios va delante de ti. Sin música ni subtítulos.",language:"es",idempotency_key:$id}')"
           planned="$(call chat "$plan_body")"
