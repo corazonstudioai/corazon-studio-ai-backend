@@ -117,3 +117,40 @@ ni avanzar a otro bloque atribuyéndole una aceptación que todavía no tiene.
 No hay una matriz global ponderada y ejecutada para todo el alcance original.
 El porcentaje total sigue sin ser verificable. No convertir conteos de archivos,
 commits o pruebas en un porcentaje de producto terminado.
+
+
+## Siguiente bloque preparado: intención de video, silencio y encuadre
+
+Pendiente de integración/publicación, en la rama codex/video-intent-silence de
+ambos repositorios. No sustituye la evidencia del backend ya publicado.
+
+Causas corregidas: el modo Video directo narraba la orden literal; el contrato
+solo admitía narración y la preferencia de encuadre no llegaba al generador.
+Video pasa ahora por Brain igual que Automático, con elección explícita de
+video o aclaración. El nuevo contrato lleva audio_mode y aspect_ratio; se
+comprueban solicitudes de silencio independientemente del plan del modelo.
+Una narración que contradiga el silencio se rechaza antes de crear archivos.
+Los planes antiguos incompatibles se cierran con una indicación para revisar,
+sin repetir generación ni devolver por error un cargo ya completado.
+
+La migración 005 conserva trabajos antiguos como narrados y marca los nuevos
+silenciosos. La composición silenciosa solo lleva pista visual y no pide TTS.
+Los formatos admitidos de video llegan al generador; la voz demasiado larga
+se rechaza antes de reservar en lugar de cortarse. Las solicitudes antiguas
+conservan su cuerpo de generación para no cambiar su hash al recuperarlas.
+Los errores permanentes liberan la solicitud local bloqueada; los transitorios
+conservan los identificadores para recuperar sin nuevas reservas.
+
+Aceptación interna: 44 escenarios Edge locales sin proveedores y contratos de
+interfaz aprobados. La aceptación CI agrega Deno, PostgreSQL aislado y navegador
+móvil con fixture MP4 vertical sin pista de audio y descarga idéntica. No se
+usaron correo, teléfono, producción ni proveedores reales en este bloque.
+
+Publicación coordinada: backend/migración primero, interfaz después. La elección
+explícita Video pasa de ejecución directa a preparación más archivo: dos créditos,
+igual que Automático y el costo indicado en pantalla. Se requiere aprobación para
+este cambio de producción; la prueba real siguiente será un único video vertical
+silencioso, dos créditos. Su workflow ya está preparado, exclusivamente manual,
+con comprobaciones de cero pistas de audio, proporción 9:16, movimiento,
+ledger, CORS de descarga y limpieza. No declararlo certificado con proveedores
+reales antes de esa prueba.

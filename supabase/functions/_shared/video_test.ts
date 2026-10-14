@@ -7,6 +7,7 @@ import {
   extractVideoUrl,
   narrationForDuration,
   parseVideoRequest,
+  silentVideoTimeline,
   videoAudioTimeline,
   pcmSpeechAudio,
 } from "./video.ts";
@@ -25,6 +26,8 @@ Deno.test("validates video request", () => {
       idempotencyKey: id,
       narration: "Un amanecer",
       voice: "nova",
+      audioMode: "narrated",
+      aspectRatio: "16:9",
     },
   );
   assertThrows(() => parseVideoRequest({ prompt: "x", duration: 5 }));
@@ -52,10 +55,7 @@ Deno.test("advertises every supported CORS method", () => {
 });
 
 Deno.test("prepares narration that fits the video duration", () => {
-  assertEquals(
-    narrationForDuration("uno dos tres cuatro cinco seis siete ocho nueve diez once doce trece", 5),
-    "uno dos tres cuatro cinco seis siete ocho nueve diez once doce…",
-  );
+  assertThrows(()=>narrationForDuration("uno dos tres cuatro cinco seis siete ocho nueve diez once doce trece",5));
   assertEquals(narrationForDuration("Mensaje breve", 10), "Mensaje breve");
 });
 
@@ -78,4 +78,20 @@ Deno.test("PCM speech keeps its actual length and cannot loop or truncate",()=>{
   assertEquals(tracks[0].keyframes[0].duration,5000);assertEquals(tracks[1].keyframes[0].duration,1000);
   assertThrows(()=>pcmSpeechAudio(new Uint8Array()));assertThrows(()=>pcmSpeechAudio(new Uint8Array(3)));
   assertThrows(()=>videoAudioTimeline("video","audio",5,6));assertThrows(()=>videoAudioTimeline("video","audio",5,NaN));
+});
+
+Deno.test("silent requests are explicit and cannot carry conflicting narration",()=>{
+  const base={prompt:"A moving sunrise",duration:5,audio_mode:"silent"};
+  assertEquals(parseVideoRequest({...base,narration:""}).audioMode,"silent");
+  assertEquals(parseVideoRequest(base).narration,"");
+  assertThrows(()=>parseVideoRequest({...base,narration:"Speak this"}));
+  assertThrows(()=>parseVideoRequest({...base,audio_mode:null}));
+  assertThrows(()=>parseVideoRequest({...base,audio_mode:"unknown"}));
+  assertEquals(silentVideoTimeline("https://example.com/video.mp4",5).tracks.length,1);
+  assertThrows(()=>silentVideoTimeline("video",7));
+});
+
+Deno.test("video aspect ratios are bounded and legacy defaults remain horizontal",()=>{
+  for(const aspect_ratio of ["9:16","16:9","1:1"])assertEquals(parseVideoRequest({prompt:"A sunrise",aspect_ratio}).aspectRatio,aspect_ratio);
+  assertThrows(()=>parseVideoRequest({prompt:"A sunrise",aspect_ratio:"4:3"}));
 });

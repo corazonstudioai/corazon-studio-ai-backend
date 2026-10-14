@@ -54,3 +54,13 @@ do $$ declare r record; event_id uuid; video_id uuid; terminal jsonb; used integ
   select free_credits_used into used from public.billing_accounts where user_id='00000000-0000-4000-8000-000000000002';
   assert used=1,'a completed video was refunded by a later poll';
 end $$;
+
+do $$ begin
+  assert exists(select 1 from public.video_jobs where audio_mode='narrated'),'legacy jobs lost narrated default';
+  update public.video_jobs set audio_mode='silent' where user_id='00000000-0000-4000-8000-000000000002';
+  begin
+    update public.video_jobs set audio_mode='invalid';
+    raise exception 'invalid audio mode accepted';
+  exception when check_violation then null;
+  end;
+end $$;
