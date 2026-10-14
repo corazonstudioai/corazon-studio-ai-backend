@@ -2,6 +2,53 @@ export type BrainAction = "text" | "image" | "voice" | "video" | "clarify";
 export type BrainPlan = { action: BrainAction; message: string; prompt: string; narration: string; required_features: string[] };
 export const availableFeatures = ["text", "image", "voice", "video"];
 
+export const brainResponseFormat = {
+  "type": "json_schema",
+  "json_schema": {
+    "name": "corazon_brain_plan",
+    "strict": true,
+    "schema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "text",
+            "image",
+            "voice",
+            "video",
+            "clarify"
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "prompt": {
+          "type": "string"
+        },
+        "narration": {
+          "type": "string",
+          "description": "Literal spoken words. For video at most 12 words, otherwise obey the requested voice content. Empty for text/image/clarify."
+        },
+        "required_features": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "action",
+        "message",
+        "prompt",
+        "narration",
+        "required_features"
+      ],
+      "additionalProperties": false
+    }
+  }
+};
+
 export function brainInstructions(language: unknown) {
   const outputLanguage = language === "en" ? "English" : "Spanish";
   return `You are Corazón Brain. Interpret the user's intended DELIVERABLE, not individual keywords.
@@ -10,11 +57,11 @@ action: text, image, voice, video, or clarify;
 message: finished text for text, a question for clarify, otherwise a short description;
 prompt: visual scene for image/video, empty otherwise;
 narration: actual words to speak for voice/video, empty otherwise;
-required_features: every capability the user explicitly requires.
+required_features: every capability the user explicitly requires. Use canonical supported labels text, image, voice, video. Negated features (such as no music) are not requirements. Camera movement and moving clouds are visual preferences, not additional capabilities. Always include all five fields as strings/array even when empty.
 Write message and narration in ${outputLanguage}. A requested script/caption/explanation about video is text.
 For an unspecified promotion, create useful text without inventing prices, contact details or offers.
 For voice, write the requested content; never speak production instructions.
-For video, describe a simple scene and write a complete narration of at most 12 words for 5 seconds.
+For video, describe a simple scene and write a complete narration of at most 12 words for 5 seconds. If the user gives a short literal narration, preserve it exactly. Count the narration words before returning.
 Available executors: text, image, voice, video with voice. Prompt: at most 1500 characters. Narration: at most 1200 characters.
 NOT available yet: research, music, subtitles, translation of uploaded media, background removal, uploaded-file editing, exact video export formats, any explicitly requested video duration other than 5 seconds, multiple deliverables.
 If any unavailable capability is required, use clarify and explain precisely what cannot yet be completed; never omit it silently or claim it is ready.
