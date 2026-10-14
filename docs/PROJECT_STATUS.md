@@ -29,6 +29,28 @@ valida capacidades y rechaza planes incompletos. El plan cuesta un crédito y
 la creación posterior de archivo otro. Cache, identificadores persistentes,
 recuperación, Storage privado y reservas/liquidaciones atómicas están integrados.
 
+## Aceptación integral final APROBADA
+
+La ejecución completa del backend final publicado pasó:
+https://github.com/corazonstudioai/corazon-studio-ai-backend/actions/runs/38609770823
+
+- Planificación real con OpenAI y recuperación del mismo plan desde cache.
+- Una reserva de archivo, replay con el mismo job, generación FAL y voz OpenAI PCM.
+- Composición con duración visual completa y voz que termina naturalmente.
+- MP4 H.264/AAC descargado y decodificado: 5,031250 segundos de video,
+  2,603 segundos de audio. Movimiento continuo en los nueve intervalos
+  analizados; mínimo medido 5,00889.
+- Ledger real del usuario técnico: exactamente dos eventos, ambos succeeded,
+  con un crédito cada uno. billing.json se guardó antes de verificar el archivo.
+  Los tres créditos inicialmente utilizados eran el límite artificial de la
+  cuenta técnica; no eran consumo de la usuaria.
+- Eliminación del usuario técnico y del helper: ambos pasos aprobados.
+- No hay nuevas generaciones ni pruebas pagadas automáticas pendientes.
+  El workflow de pago queda exclusivamente manual.
+
+Esta aceptación cierra el bloque autorizado de publicación y prueba limitada.
+No convierte todos los modos o el producto completo en una aceptación al 100%.
+
 ## Causas raíz resueltas durante aceptación
 
 1. El entorno de prueba usaba un token distinto del entorno de despliegue:
@@ -85,10 +107,9 @@ limpieza de identidades/funciones temporales. No se ejecuta en pushes normales.
 La comprobación del ledger se guarda antes de validar duración/media para
 conservar evidencia incluso si una futura prueba de archivo falla.
 
-La composición y el despliegue están aceptados. Una nueva ejecución integral
-desde planificación hasta ledger usando todo el backend final, todos los modos
-con proveedores reales, dictado, música, subtítulos, traducción, eliminación de
-fondo y formatos exactos siguen pendientes. No declarar Brain completo al 100%
+La composición y el despliegue están aceptados. La ejecución integral del backend final, desde planificación hasta ledger, ya
+pasó. La aceptación de todos los modos con proveedores reales, dictado, música,
+subtítulos, traducción, eliminación de fondo y formatos exactos sigue pendiente. No declarar Brain completo al 100%
 ni avanzar a otro bloque atribuyéndole una aceptación que todavía no tiene.
 
 ## Porcentaje del plan total

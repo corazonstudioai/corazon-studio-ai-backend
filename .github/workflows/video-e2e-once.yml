@@ -1,8 +1,6 @@
 name: Brain real-provider acceptance (manual, two credits)
 on:
-  push:
-    branches: [architecture/supabase-edge-video]
-    paths: [.github/workflows/video-e2e-once.yml]
+  workflow_dispatch:
 permissions:
   contents: read
 concurrency:
