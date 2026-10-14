@@ -38,9 +38,13 @@ do $$ declare r record; event_id uuid; used numeric; status text; begin
 end $$;
 
 do $$ declare r record; event_id uuid; video_id uuid; terminal jsonb; used integer; begin
-  select * into r from public.reserve_generation_v2('00000000-0000-4000-8000-000000000002','email','video_minutes',0.0833,1,0.1,'test','10000000-0000-4000-8000-000000000005',repeat('f',64));
+  select * into r from public.reserve_generation_v2('00000000-0000-4000-8000-000000000002','email','video_minutes',5::numeric/60,1,0.1,'test','10000000-0000-4000-8000-000000000005',repeat('f',64));
   assert r.allowed;
   event_id:=r.reservation_id;
+  select * into r from public.reserve_generation_v2('00000000-0000-4000-8000-000000000002','email','video_minutes',5::numeric/60,1,0.1,'test','10000000-0000-4000-8000-000000000005',repeat('f',64));
+  assert r.allowed and r.reason='idempotent_replay' and r.reservation_id=event_id,'fractional video replay changed its reservation';
+  select free_credits_used into used from public.billing_accounts where user_id='00000000-0000-4000-8000-000000000002';
+  assert used=1,'fractional replay charged twice';
   insert into public.video_jobs(user_id,reservation_id,model,provider_request_id,status_url,response_url,duration_seconds,narration_text)
   values('00000000-0000-4000-8000-000000000002',event_id,'test','test-id','https://queue.fal.run/status','https://queue.fal.run/result',5,'Hola') returning id into video_id;
   select public.settle_video_job(video_id,true,'https://example.invalid/video.mp4',null) into terminal;
