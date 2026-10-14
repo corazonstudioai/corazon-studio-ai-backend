@@ -48,6 +48,8 @@ declare
   event_id uuid;
   period text;
 begin
+  -- Match numeric(12,4) storage precision before validating replay or usage.
+  p_units := round(p_units, 4);
   if p_identity_kind is null or p_identity_kind not in ('email','phone') or p_units is null or p_units <= 0 or p_credit_cost is null or p_credit_cost < 0 or p_estimated_cost_usd is null or p_estimated_cost_usd < 0 or p_idempotency_key is null then
     return query select false, 'invalid_request', null::uuid, 0, 0;
     return;
