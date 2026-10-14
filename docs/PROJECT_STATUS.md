@@ -1,108 +1,98 @@
-# Corazón Studio IA: continuidad del plan
+# Corazón Studio IA: estado verificable — 14 de octubre de 2026
 
-## Decisión de infraestructura (13 de octubre de 2026)
+## Infraestructura y permisos
 
-Continuar con Supabase. No migrar a Neon ni eliminar servicios o datos por la
-pausa de inactividad del plan gratuito. La comparación queda como alternativa
-futura si los límites afectan el uso real. No se ha autorizado crear una cuenta
-en Neon, transferir datos ni habilitar facturación.
+Continuar con Supabase; no migrar a Neon. Neon queda como alternativa futura.
+La usuaria aprobó integrar y publicar backend/interfaz y realizar una prueba
+limitada con OpenAI/FAL a dos créditos de aplicación por archivo.
+No se activaron servicios ni facturación nuevos. No se accedió al correo,
+teléfono, códigos ni cuentas personales de la usuaria. Las identidades técnicas
+de prueba usaron example.invalid, sin enviar correos, y fueron eliminadas.
+Las funciones temporales de prueba también fueron eliminadas.
 
-Neon se evaluó por su base PostgreSQL con reactivación automática y sus servicios
-de autenticación, archivos y funciones. Si se vuelve a considerar, verificar las
-condiciones vigentes en https://neon.com/pricing y probar la compatibilidad antes
-de decidir. La infraestructura gratuita no cubre el consumo de proveedores de IA.
+Reglas permanentes: autorización para servicios nuevos, acciones fuera de
+GitHub/Supabase y grandes merges a producción; autonomía para auditorías,
+correcciones y pruebas internas. Trabajar por bloques, corregir causas raíz
+y reportar solo avance total, terminado/probado y decisiones necesarias.
 
-## Alcance original
+## Publicación completada
 
-Completar Corazón Brain, interfaz sencilla ES/EN, texto, imágenes, voz, video,
-música, subtítulos, traducción, eliminación de fondo y descarga de resultados.
-El objetivo es resolver las necesidades de la usuaria; ninguna función se congela
-por principio. Trabajar dentro de los repositorios backend y web. No acceder a
-cuentas externas, secretos ni la página publicada sin autorización separada.
+- Backend: PR #10 integrado; migración 004 y funciones Edge desplegadas.
+- Web: PR #12 integrado y Pages desplegado. Se conservó el cambio reciente
+  de «Dinos» a «Dime» resolviendo su conflicto antes de publicar.
+- App: https://corazonstudioai.github.io/corazon-studio-ai-web/
+- Correcciones derivadas de aceptación: PR #11, #12 y #13 del backend.
+  Las tres fueron integradas, comprobadas y desplegadas.
 
-## Incremento actual
+Brain entrega planes estructurados de texto, imagen, voz o video con voz;
+valida capacidades y rechaza planes incompletos. El plan cuesta un crédito y
+la creación posterior de archivo otro. Cache, identificadores persistentes,
+recuperación, Storage privado y reservas/liquidaciones atómicas están integrados.
 
-- Primera capa de enrutamiento de Brain en la interfaz: distinguir un guion de
-  la generación de video; respetar el modo elegido explícitamente. Sigue siendo
-  un enrutador basado en reglas, no el orquestador completo de lenguaje natural.
-- Voz: separar texto hablado e instrucciones de estilo; rechazar textos de más
-  de 1200 caracteres antes de reservar créditos, en lugar de truncarlos.
-- Chat: aplicar el idioma de salida seleccionado y rechazar respuestas vacías
-  antes de marcar la generación como exitosa.
-- Interfaz: cerrar correctamente la autenticación cancelada; mostrar errores
-  de créditos/sesión como tales. Consultar al servidor por videos pendientes,
-  sin afirmar una devolución basada únicamente en el tiempo del navegador.
+## Causas raíz resueltas durante aceptación
 
-## Validación pendiente
+1. El entorno de prueba usaba un token distinto del entorno de despliegue:
+   se reutilizó supabase-production, sin exponer credenciales.
+2. La cuota gratuita tiene cinco créditos fijos: el usuario técnico se limita
+   a dos disponibles mediante tres ya utilizados, sin alterar el esquema.
+3. Cinco segundos llegan como 5/60 minutos, pero la base guarda cuatro
+   decimales. Se normalizan antes de comparar replay/cuotas; la regresión
+   PostgreSQL exige la misma reserva y un único cargo.
+4. JSON mode no garantiza el contrato de Brain: OpenAI recibe ahora JSON Schema
+   estricto, conservando las validaciones semánticas y devolución por fallo.
+5. merge-audio-video recortó el archivo real a 2,35 segundos al terminar la voz.
+   compose usa una pista visual explícita y una pista de audio con duración
+   medida por muestras PCM 24 kHz. La voz se envuelve en WAV; no se alarga,
+   repite ni corta para rellenar el video.
+6. El verificador confundía ausencia de muestras después de la voz con fallo:
+   mide ese tramo con silencio añadido únicamente durante el análisis.
+   No se modificó el contenido del archivo para hacer pasar ese control.
 
-El código y las pruebas no equivalen a un despliegue ni a una generación real.
-Reactivar Supabase manualmente y comprobar registro, chat ES/EN, voz, video con
-audio, recuperación tras recarga y crédito final. No se consumieron servicios
-de IA reales durante estas correcciones. El orquestador completo, dictado,
-subtítulos, música y exportación de formatos requieren implementación/validación
-adicional; este incremento no los declara terminados.
+## Evidencia y límites
 
-## Reglas de trabajo vigentes (13 de octubre de 2026)
+- Backend: Deno/tipos, integración de handlers con proveedores simulados y
+  PostgreSQL 17 aislado aprobados para el último código de producción.
+  Incluye concurrencia, permisos, primer uso, hash, cache, devolución,
+  duración PCM, respuestas de compose y replay de unidades fraccionarias.
+- Web: contratos y navegador móvil aislado aprobados; recuperación, cancelación
+  de autenticación ficticia y descarga idéntica byte por byte.
+  Pages publicado se comprobó sin iniciar sesión personal.
+- Prueba real integral:
+  https://github.com/corazonstudioai/corazon-studio-ai-backend/actions/runs/38605430339
+  Brain, replay, video y TTS ejecutados; produjo un MP4 real con voz. Esa
+  ejecución no pasó su aceptación de duración y se corrigió la causa.
+  No etiquetarla como una ejecución integral aprobada ni afirmar que llegó
+  al chequeo final del ledger, situado después de la comprobación de duración.
+- Composición real corregida:
+  https://github.com/corazonstudioai/corazon-studio-ai-backend/actions/runs/38607895496
+  Reutilizó la escena y voz existentes, sin nuevas llamadas de generación de
+  video ni síntesis de voz. Se ajustó el tiempo visual del fragmento ya
+  descargado para comprobar una línea visual de cinco segundos.
+- Aceptación del mismo archivo, sin llamadas adicionales a proveedores:
+  https://github.com/corazonstudioai/corazon-studio-ai-backend/actions/runs/38608683478
+  APROBADA: MP4 de 5,000 segundos, H.264/AAC, movimiento continuo medible,
+  voz audible que termina naturalmente y descarga/decodificación completas.
+  La validación local confirmó movimiento mínimo 4,10118 y cola de audio
+  silenciosa de -91 dB. Los primeros indicadores fallidos del verificador
+  no implicaban voz repetida.
+- Hubo intentos previos de prueba, incluido un video iniciado antes de
+  corregir replay. No afirmar que el gasto total de proveedores fue una sola
+  llamada ni confundir créditos de la app con el importe facturado por IA.
+  No se consultaron facturas ni se cambió el saldo de la usuaria.
 
-- Nunca acceder al correo, cuentas personales o teléfono de la usuaria. Si un
-  proceso exige verificación, pedirle que la haga ella, explicar el motivo y
-  esperar su confirmación. No buscar ni solicitar códigos como si se tuviera
-  acceso a esos medios.
-- Pedir autorización para activar/pagar servicios nuevos, operar fuera de GitHub
-  y Supabase, o integrar cambios grandes a producción.
-- Continuar autónomamente con auditorías, correcciones y pruebas internas.
-- Trabajar por bloques completos. Auditar dependencias, corregir causas raíz y
-  no declarar un bloque terminado por una prueba superficial.
-- Al cerrar una sesión, reportar solo avance verificable del plan total,
-  funciones completamente terminadas/probadas y decisiones necesarias.
+La prueba de pago queda manual, con helper protegido por un token aleatorio y
+limpieza de identidades/funciones temporales. No se ejecuta en pushes normales.
+La comprobación del ledger se guarda antes de validar duración/media para
+conservar evidencia incluso si una futura prueba de archivo falla.
 
-## Bloque Brain bajo revisión
+La composición y el despliegue están aceptados. Una nueva ejecución integral
+desde planificación hasta ledger usando todo el backend final, todos los modos
+con proveedores reales, dictado, música, subtítulos, traducción, eliminación de
+fondo y formatos exactos siguen pendientes. No declarar Brain completo al 100%
+ni avanzar a otro bloque atribuyéndole una aceptación que todavía no tiene.
 
-La rama propone planificación estructurada de lenguaje natural, seguida de una
-ejecución acotada de texto, imagen, voz o video. Los pedidos de funcionalidades
-todavía no integradas reciben una explicación; no se ignoran silenciosamente.
-El texto/plan consume un crédito. Una creación de archivos posterior consume
-otro: se muestra este costo en la interfaz. Un fallo de creación devuelve el
-crédito de esa creación, no el de un plan entregado satisfactoriamente.
+## Porcentaje del plan total
 
-Dependencias auditadas: reservas, límites, identidad, cache de resultados,
-almacenamiento privado, firma de enlaces, generación de audio y seguimiento de
-video. La migración 004 serializa reservas, vincula cada clave a su solicitud,
-guarda resultados durables y liquida estado/créditos del video en una transacción.
-La interfaz conserva los identificadores de las etapas para recuperar solicitudes
-sin volver a planificar ni volver a generar archivos que ya existen.
-
-Aceptación aislada: contratos del plan, integración de los handlers Edge con
-proveedores simulados, fallos de almacenamiento, ausencia de sesión, límites,
-repeticiones, recuperación y concurrencia. PostgreSQL se prueba exclusivamente
-en un contenedor efímero del workflow de PR, no en la base de la usuaria.
-
-No se activaron cuentas, facturación ni servicios externos; no se verificaron
-correos reales; no se consumieron proveedores de IA reales. Esta rama requiere
-aprobación antes de integrarse y antes de cualquier validación con proveedores
-externos. Las pruebas internas no certifican la calidad de la respuesta del
-modelo ni un archivo real descargado y reproducido.
-
-## Medición del plan total
-
-No hay todavía una ponderación acordada del plan ni una batería completa de
-aceptación real de todas sus funciones. No usar conteos de archivos, pruebas o
-commits como porcentaje de producto terminado. Mantener el porcentaje total como
-no verificable hasta establecer y ejecutar una matriz integral. Funciones aún
-sin aceptación real: Brain, identidad/interfaz, créditos, conversación, imágenes,
-voz/dictado, video, música, subtítulos, traducción, eliminación de fondo y
-exportación. No avanzar a otro bloque mientras Brain no cierre su aceptación.
-
-## Evidencia de esta sesión
-
-- Los 29 escenarios de integración local usan los handlers reales y proveedores
-  simulados; no gastan saldo de IA.
-- El workflow de aceptación de Brain aprobó en PostgreSQL 17 aislado: reaplicación
-  de migraciones, primer uso y cuotas, cache, permisos, devolución idempotente,
-  cierre transaccional del video y ocho solicitudes simultáneas con un solo cargo.
-- Los controles Deno/tipos y las pruebas existentes del backend aprobaron en el PR.
-- El workflow de navegador móvil aprobó el recorrido real de interfaz con todas
-  las solicitudes interceptadas: cancelación, código ficticio de ocho dígitos con
-  espacios, texto, carga de audio/imagen y recuperación sin repetir el plan.
-- No se realizaron integración a main, despliegue, pruebas con cuentas personales
-  ni generación con proveedores reales. Brain sigue pendiente de esa aceptación.
+No hay una matriz global ponderada y ejecutada para todo el alcance original.
+El porcentaje total sigue sin ser verificable. No convertir conteos de archivos,
+commits o pruebas en un porcentaje de producto terminado.
