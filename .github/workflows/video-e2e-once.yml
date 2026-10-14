@@ -10,6 +10,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   brain-e2e:
+    environment: supabase-production
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -77,6 +78,7 @@ jobs:
           p.write_text(p.read_text().replace('TOKEN_PLACEHOLDER',os.environ['E2E_TOKEN']).replace('RUN_PLACEHOLDER',os.environ['GITHUB_RUN_ID']))
           PY
           supabase functions deploy "$helper" --project-ref "$SUPABASE_PROJECT_REF" --use-api --no-verify-jwt
+          echo "HELPER_DEPLOYED=true" >> "$GITHUB_ENV"
       - name: Plan once, generate once, verify playback bytes and two credits
         shell: bash
         run: |
@@ -140,7 +142,7 @@ jobs:
         if: always()
         shell: bash
         run: |
-          if [[ -n "${HELPER_NAME:-}" ]]; then
+          if [[ "${HELPER_DEPLOYED:-}" == true ]]; then
             curl --fail --silent --show-error --max-time 45 --request DELETE -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" "https://api.supabase.com/v1/projects/$SUPABASE_PROJECT_REF/functions/$HELPER_NAME" >/dev/null
           fi
       - uses: actions/upload-artifact@v4
