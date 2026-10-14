@@ -124,7 +124,7 @@ jobs:
           curl --fail --silent --show-error --max-time 90 --location "$video_url" --output acceptance/video.mp4
           if ! command -v ffprobe >/dev/null; then sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg; fi
           ffprobe -v error -show_streams -show_format -of json acceptance/video.mp4 > acceptance/media.json
-          jq -e '([.streams[]|select(.codec_type=="video")]|length)==1 and ([.streams[]|select(.codec_type=="audio")]|length)>=1 and (.format.duration|tonumber)>=4' acceptance/media.json >/dev/null
+          jq -e '([.streams[]|select(.codec_type=="video")]|length)==1 and ([.streams[]|select(.codec_type=="audio")]|length)>=1 and (.format.duration|tonumber)>=4.9 and (.format.duration|tonumber)<=5.2' acceptance/media.json >/dev/null
           ffmpeg -v error -i acceptance/video.mp4 -an -f framemd5 acceptance/frames.md5
           python - <<'PY'
           import pathlib
@@ -135,7 +135,7 @@ jobs:
           python - <<'PY'
           import pathlib
           values=[float(line.split('=',1)[1]) for line in pathlib.Path('acceptance/motion.txt').read_text().splitlines() if line.startswith('lavfi.signalstats.YAVG=')]
-          assert len(values)>=5 and max(values)>0.5,'No perceptible frame motion'
+          assert len(values)>=8 and sum(value>0.5 for value in values)>=0.8*len(values),'No continuous perceptible frame motion'
           PY
           ffmpeg -hide_banner -i acceptance/video.mp4 -af volumedetect -vn -f null - 2> acceptance/audio.txt
           python - <<'PY'
