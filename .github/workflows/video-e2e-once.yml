@@ -47,7 +47,7 @@ jobs:
               const created=await service.auth.admin.createUser({email,password,email_confirm:true});
               if(created.error||!created.data.user)return respond({error:"create_failed"},500);
               const id=created.data.user.id;
-              const account=await service.from("billing_accounts").insert({user_id:id,identity_kind:"email",free_credits_total:2});
+              const account=await service.from("billing_accounts").insert({user_id:id,identity_kind:"email",free_credits_used:3});
               if(account.error){await service.auth.admin.deleteUser(id);return respond({error:"account_failed"},500);}
               const client=createClient(url,Deno.env.get("SUPABASE_ANON_KEY")!);
               const signed=await client.auth.signInWithPassword({email,password});
@@ -85,7 +85,7 @@ jobs:
           set -euo pipefail
           base="https://${SUPABASE_PROJECT_REF}.supabase.co/functions/v1"
           helper_url="$base/$HELPER_NAME"
-          session="$(curl --fail --silent --show-error --max-time 40 -H "x-test-key: $HELPER_TOKEN" -H 'content-type: application/json' --data '{"action":"create"}' "$helper_url")"
+          session="$(curl --fail-with-body --silent --show-error --max-time 40 -H "x-test-key: $HELPER_TOKEN" -H 'content-type: application/json' --data '{"action":"create"}' "$helper_url")"
           user_id="$(jq -er '.user_id' <<<"$session")"
           access_token="$(jq -er '.access_token' <<<"$session")"
           echo "::add-mask::$access_token"
@@ -127,7 +127,7 @@ jobs:
           ffmpeg -hide_banner -i acceptance/video.mp4 -af volumedetect -vn -f null - 2> acceptance/audio.txt
           ! grep -q 'max_volume: -inf' acceptance/audio.txt
           verification="$(curl --fail --silent --show-error --max-time 40 -H "x-test-key: $HELPER_TOKEN" -H 'content-type: application/json' --data "$(jq -n --arg id "$user_id" '{action:"verify",user_id:$id}')" "$helper_url")"
-          jq -e '.account.free_credits_total==2 and .account.free_credits_used==2 and (.events|length)==2 and all(.events[];.status=="succeeded" and .credits_charged==1)' <<<"$verification" >/dev/null
+          jq -e '.account.free_credits_total==5 and .account.free_credits_used==5 and (.events|length)==2 and all(.events[];.status=="succeeded" and .credits_charged==1)' <<<"$verification" >/dev/null
           jq '{plan:.plan}' <<<"$planned" > acceptance/plan.json
           printf '%s\n' 'PASS: actual planning, cached replay, one video, moving frames, non-silent audio, complete download, exactly two credits.' > acceptance/result.txt
           cat acceptance/result.txt
