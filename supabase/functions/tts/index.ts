@@ -1,8 +1,8 @@
 import { corsHeaders } from "../_shared/video.ts";
+import { parseSpeechRequest } from "../_shared/content.ts";
 import {
   authenticateAndReserve,
   bytesToBase64,
-  cleanText,
   failureResponse,
   finalize,
   isUnsafe,
@@ -24,34 +24,13 @@ Deno.serve(async (request) => {
   let reservationId = "";
   try {
     const body = await request.json();
-    const text = cleanText(body.text, 1200);
-    if (!text) {
-      return json(
-        origin,
-        { message: "Escribe el texto que deseas escuchar." },
-        400,
-      );
-    }
+    const { text, voice, instructions } = parseSpeechRequest(body);
     if (isUnsafe(text)) {
       return json(origin, {
         message: "Esta solicitud no cumple las reglas de contenido seguro.",
       }, 400);
     }
     const model = Deno.env.get("OPENAI_TTS_MODEL") ?? "gpt-4o-mini-tts";
-    const voice = [
-        "alloy",
-        "ash",
-        "ballad",
-        "coral",
-        "echo",
-        "fable",
-        "nova",
-        "onyx",
-        "sage",
-        "shimmer",
-      ].includes(body.voice)
-      ? body.voice
-      : "nova";
     const minutes = Math.max(text.length / 900, 0.01);
     const reserved = await authenticateAndReserve(request, {
       resource: "voice_minutes",
@@ -73,11 +52,13 @@ Deno.serve(async (request) => {
         voice,
         input: text,
         response_format: "mp3",
-        instructions: cleanText(body.instructions, 500) || undefined,
+        instructions: instructions || undefined,
       }),
     });
     if (!response.ok) throw new Error("provider_error");
-    const audio = bytesToBase64(new Uint8Array(await response.arrayBuffer()));
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (!bytes.length) throw new Error("provider_error");
+    const audio = bytesToBase64(bytes);
     await finalize(service, reservationId, true);
     return json(origin, {
       status: "ok",

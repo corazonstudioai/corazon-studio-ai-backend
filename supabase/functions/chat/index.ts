@@ -1,4 +1,5 @@
 import { corsHeaders } from "../_shared/video.ts";
+import { languageInstruction, requireReply } from "../_shared/content.ts";
 import {
   authenticateAndReserve,
   cleanText,
@@ -52,8 +53,9 @@ Deno.serve(async (request) => {
         messages: [
           {
             role: "system",
-            content:
-              "Eres Corazón Studio AI. Responde en el idioma del usuario con calidez, claridad y utilidad. Ayuda a crear contenido positivo, educativo, humano y seguro. No produzcas contenido sexual, explotador, violento ni instrucciones peligrosas.",
+            content: `Eres Corazón Studio AI. ${
+              languageInstruction(body.language)
+            } Responde con calidez, claridad y utilidad. Ayuda a crear contenido positivo, educativo, humano y seguro. No produzcas contenido sexual, explotador, violento ni instrucciones peligrosas.`,
           },
           { role: "user", content: message },
         ],
@@ -63,7 +65,7 @@ Deno.serve(async (request) => {
     });
     if (!response.ok) throw new Error("provider_error");
     const result = await response.json();
-    const reply = result.choices?.[0]?.message?.content ?? "";
+    const reply = requireReply(result.choices?.[0]?.message?.content);
     await finalize(service, reservationId, true);
     return json(origin, {
       status: "ok",

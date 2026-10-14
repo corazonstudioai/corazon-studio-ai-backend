@@ -33,7 +33,7 @@ jobs:
 
       - name: Test Edge Functions
         run: |
-          deno test supabase/functions/_shared/video_test.ts supabase/functions/_shared/ai_test.ts
+          deno test supabase/functions/_shared/video_test.ts supabase/functions/_shared/ai_test.ts supabase/functions/_shared/content_test.ts
           deno check \
             supabase/functions/health/index.ts \
             supabase/functions/chat/index.ts \

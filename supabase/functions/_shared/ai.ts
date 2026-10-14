@@ -110,6 +110,17 @@ export async function finalize(
 
 export function failureResponse(origin: string | null, error: unknown) {
   const code = String((error as Error)?.message ?? error);
+  if (
+    code === "empty_speech" || code === "speech_too_long" ||
+    code === "invalid_request"
+  ) {
+    return json(origin, {
+      code,
+      message: code === "speech_too_long"
+        ? "El texto de voz admite hasta 1200 caracteres. Acórtalo e inténtalo nuevamente."
+        : "Escribe el texto que deseas escuchar.",
+    }, 400);
+  }
   if (code === "unauthorized") {
     return json(origin, { message: "Inicia sesión para continuar." }, 401);
   }
