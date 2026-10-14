@@ -1,3 +1,4 @@
+import { readJsonRequest } from "../_shared/request.ts";
 import { replayResult, saveResult } from "../_shared/results.ts";
 import { corsHeaders } from "../_shared/video.ts";
 import { languageInstruction, requireReply } from "../_shared/content.ts";
@@ -26,7 +27,7 @@ Deno.serve(async (request) => {
   let service;
   let reservationId = "";
   try {
-    const body = await request.json().catch(() => null);
+    const body = await readJsonRequest(request);
     if (!body || typeof body !== "object" || Array.isArray(body)) throw new Error("invalid_request");
     if (typeof body.message === "string" && body.message.trim().length > 4000) throw new Error("invalid_request");
     const message = cleanText(body.message, 4000);

@@ -1,3 +1,4 @@
+import { readJsonRequest } from "../_shared/request.ts";
 import { replayResult, saveMediaResult } from "../_shared/results.ts";
 import { corsHeaders } from "../_shared/video.ts";
 import {
@@ -24,7 +25,7 @@ Deno.serve(async (request) => {
   let service;
   let reservationId = "";
   try {
-    const body = await request.json().catch(() => null);
+    const body = await readJsonRequest(request);
     if (!body || typeof body !== "object" || Array.isArray(body)) throw new Error("invalid_request");
     if (typeof body.prompt === "string" && body.prompt.trim().length > 1800) throw new Error("invalid_request");
     const prompt = cleanText(body.prompt, 1800);
@@ -41,8 +42,8 @@ Deno.serve(async (request) => {
       }, 400);
     }
     const model = Deno.env.get("OPENAI_IMAGE_MODEL") ?? "gpt-image-1";
-    const size = ["1024x1024", "1536x1024", "1024x1536"].includes(body.size)
-      ? body.size
+    const size = ["1024x1024", "1536x1024", "1024x1536"].includes(String(body.size))
+      ? String(body.size)
       : "1024x1024";
     const reserved = await authenticateAndReserve(request, {
       resource: "images",

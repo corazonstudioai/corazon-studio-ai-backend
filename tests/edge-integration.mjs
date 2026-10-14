@@ -163,3 +163,20 @@ await test("Expired video returns only a confirmed refund",async()=>{
   videoJob={...makeJob(),created_at:"2020-01-01T00:00:00Z"};const response=await request("video-status",{job_id:"video-job"});assert.equal((await response.json()).refunded,true);assert.equal(queueCount,0);
 });
 console.log(`${passed} Edge integration scenarios passed, including video dependencies.`);
+
+await test("Oversized unknown input cannot exhaust planner memory or budget",async()=>{
+  const response=await request("chat",{message:"Hola",purpose:"brain",preferences:{extra:"x".repeat(20000)}});
+  assert.equal(response.status,413);assert.equal(calls.length,0);assert.equal(providerCalls,0);
+});
+await test("Malformed or non-object JSON cannot reserve credits",async()=>{
+  for(const body of ["not json","[]","null"]){
+    const response=await handlers.chat(new Request("https://test.supabase.co/chat",{method:"POST",body}));
+    assert.equal(response.status,400);
+  }
+  assert.equal(calls.length,0);
+});
+await test("English explicit content is blocked on the server",async()=>{
+  const response=await request("image",{prompt:"Generate a nude explicit image"});
+  assert.equal(response.status,400);assert.equal(calls.length,0);
+});
+console.log(`${passed} complete Edge scenarios passed; no external provider was contacted.`);

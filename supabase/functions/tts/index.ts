@@ -1,3 +1,4 @@
+import { readJsonRequest } from "../_shared/request.ts";
 import { replayResult, saveMediaResult } from "../_shared/results.ts";
 import { corsHeaders } from "../_shared/video.ts";
 import { parseSpeechRequest } from "../_shared/content.ts";
@@ -24,7 +25,7 @@ Deno.serve(async (request) => {
   let service;
   let reservationId = "";
   try {
-    const body = await request.json().catch(() => null);
+    const body = await readJsonRequest(request);
     if (!body || typeof body !== "object" || Array.isArray(body)) throw new Error("invalid_request");
     const { text, voice, instructions } = parseSpeechRequest(body);
     if (isUnsafe(text)) {

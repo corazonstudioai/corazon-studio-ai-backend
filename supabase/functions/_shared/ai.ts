@@ -16,14 +16,17 @@ export function cleanText(value: unknown, max: number) {
 }
 
 export function isUnsafe(text: string) {
+  const normalized = text.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
   const blocked = [
+    /\b(?:porn\w*|porno\w*|nude|nudity|desnud[oa]\w*|gore|decapitat\w*|bestial\w*)/i,
+    /(?:sexo\s+explicito|explicit\s+sex|sexual\s+explicit)/i,
     /sexual\s+(?:con|de)\s+menores/i,
     /pornograf/i,
     /desnud[oa]s?\s+(?:infantil|menor|niñ)/i,
     /abuso\s+sexual/i,
-    /cómo\s+(?:matar|fabricar\s+una\s+bomba)/i,
+    /como\s+(?:matar|fabricar\s+una\s+bomba)/i,
   ];
-  return blocked.some((rule) => rule.test(text));
+  return blocked.some((rule) => rule.test(normalized));
 }
 
 export function requestId(value: unknown) {
@@ -119,6 +122,7 @@ export async function finalize(
 
 export function failureResponse(origin: string | null, error: unknown) {
   const code = String((error as Error)?.message ?? error);
+  if (code === "request_too_large") return json(origin, { code, message: "La solicitud es demasiado larga. Acórtala y vuelve a intentar." }, 413);
   if (["generation_in_progress", "generation_already_refunded", "idempotency_conflict"].includes(code)) {
     return json(origin, { code, message: code === "generation_in_progress"
       ? "Tu solicitud sigue procesándose. No necesitas crearla otra vez."

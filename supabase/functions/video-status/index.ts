@@ -1,3 +1,4 @@
+import { readJsonRequest } from "../_shared/request.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import {
   corsHeaders,
@@ -113,7 +114,7 @@ Deno.serve(async (request) => {
     return json(origin, { message: "Tu sesión ya no es válida." }, 401);
   }
 
-  const body = await request.json().catch(() => ({}));
+  const body = await readJsonRequest(request).catch(() => ({} as Record<string, unknown>));
   const jobId = typeof body.job_id === "string" ? body.job_id : "";
   if (!jobId) {
     return json(origin, { message: "Falta el identificador del video." }, 400);

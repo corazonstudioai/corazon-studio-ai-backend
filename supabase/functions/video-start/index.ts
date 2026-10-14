@@ -1,3 +1,4 @@
+import { readJsonRequest } from "../_shared/request.ts";
 import { hashRequest, isUnsafe } from "../_shared/ai.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders, parseVideoRequest } from "../_shared/video.ts";
@@ -59,7 +60,7 @@ Deno.serve(async (request) => {
   let input;
   let body;
   try {
-    body = await request.json();
+    body = await readJsonRequest(request);
     input = parseVideoRequest(body);
     if (isUnsafe(input.prompt) || isUnsafe(input.narration)) throw new Error("unsafe_request");
   } catch {
