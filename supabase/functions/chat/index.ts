@@ -2,7 +2,7 @@ import { readJsonRequest } from "../_shared/request.ts";
 import { replayResult, saveResult } from "../_shared/results.ts";
 import { corsHeaders } from "../_shared/video.ts";
 import { languageInstruction, requireReply } from "../_shared/content.ts";
-import { brainInstructions, parseBrainReply } from "../_shared/brain.ts";
+import { brainInstructions, brainResponseFormat, parseBrainReply } from "../_shared/brain.ts";
 import {
   authenticateAndReserve,
   cleanText,
@@ -71,7 +71,7 @@ Deno.serve(async (request) => {
         ],
         max_tokens: planning ? 1100 : 700,
         temperature: planning ? 0.2 : 0.65,
-        ...(planning ? { response_format: { type: "json_object" } } : {}),
+        ...(planning ? { response_format: brainResponseFormat } : {}),
       }),
     });
     if (!response.ok) throw new Error("provider_error");

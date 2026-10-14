@@ -54,7 +54,7 @@ await test("Brain planner validates and persists its plan",async()=>{
   responseValue={choices:[{message:{content:JSON.stringify(plan)}}]};
   const response=await request("chat",{message:"Crea un video inspirador",purpose:"brain",language:"es"});
   assert.equal(response.status,200);assert.deepEqual((await response.json()).plan,plan);
-  const provider=calls.find(c=>c.name==="provider");assert.deepEqual(provider.body.response_format,{type:"json_object"});
+  const provider=calls.find(c=>c.name==="provider");assert.equal(provider.body.response_format.type,"json_schema"); assert.equal(provider.body.response_format.json_schema.strict,true); assert.equal(provider.body.response_format.json_schema.schema.additionalProperties,false); assert.deepEqual(provider.body.response_format.json_schema.schema.required,["action","message","prompt","narration","required_features"]);
   assert.ok(provider.body.messages[0].content.includes("Spanish"));
   assert.equal(calls.find(c=>c.name==="save_generation_result").args.p_result.plan.action,"video");
   assert.equal(calls.filter(c=>c.name==="finalize_generation").length,0,"Saving result atomically settles the event");
