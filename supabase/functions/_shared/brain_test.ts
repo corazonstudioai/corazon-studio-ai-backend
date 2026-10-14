@@ -1,8 +1,8 @@
 import { assertEquals, assertThrows } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { brainInstructions, parseBrainPlan, parseBrainReply, validateBrainIntent, wantsSilentVideo } from "./brain.ts";
+import { brainInstructions, parseBrainPlan, parseBrainReply, validateBrainIntent, wantsSilentVideo, type BrainPlan } from "./brain.ts";
 
-const text={action:"text",message:"Dios va adelante.",prompt:"",narration:"",required_features:["text"]};
-const video={action:"video",message:"Un video",prompt:"Un amanecer tranquilo",narration:"Dios va adelante. Sigue con fe.",required_features:["video","voice"]};
+const text: BrainPlan={action:"text",message:"Dios va adelante.",prompt:"",narration:"",required_features:["text"]};
+const video: BrainPlan={action:"video",message:"Un video",prompt:"Un amanecer tranquilo",narration:"Dios va adelante. Sigue con fe.",required_features:["video","voice"]};
 Deno.test("Brain instructions bind language and capabilities",()=>{
   assertEquals(brainInstructions("en").includes("English"),true);
   assertEquals(brainInstructions("es").includes("Spanish"),true);
