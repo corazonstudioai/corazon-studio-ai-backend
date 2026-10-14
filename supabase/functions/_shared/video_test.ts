@@ -7,6 +7,8 @@ import {
   extractVideoUrl,
   narrationForDuration,
   parseVideoRequest,
+  videoAudioTimeline,
+  pcmSpeechAudio,
 } from "./video.ts";
 
 Deno.test("validates video request", () => {
@@ -55,4 +57,25 @@ Deno.test("prepares narration that fits the video duration", () => {
     "uno dos tres cuatro cinco seis siete ocho nueve diez once doce…",
   );
   assertEquals(narrationForDuration("Mensaje breve", 10), "Mensaje breve");
+});
+
+Deno.test("composition preserves the visual timeline with short narration", () => {
+  const body=videoAudioTimeline("https://example.com/visual.mp4","data:audio/mpeg;base64,YQ==",5,2);
+  assertEquals(body.tracks[0].type,"video");
+  assertEquals(body.tracks[0].keyframes[0].duration,5000);
+  assertEquals(body.tracks[1].keyframes[0].timestamp,0);
+  assertEquals(body.tracks[1].keyframes[0].url,"data:audio/mpeg;base64,YQ==");
+  assertEquals(videoAudioTimeline("video","audio",10,2).tracks[0].keyframes[0].duration,10000);
+  assertThrows(()=>videoAudioTimeline("video","audio",7,2));
+  assertEquals(extractVideoUrl({video_url:"https://example.com/compose.mp4"}),"https://example.com/compose.mp4");
+});
+
+Deno.test("PCM speech keeps its actual length and cannot loop or truncate",()=>{
+  const pcm=new Uint8Array(48000);pcm[0]=1;const audio=pcmSpeechAudio(pcm);
+  assertEquals(audio.durationSeconds,1);assertEquals(audio.wav.byteLength,48044);assertEquals(audio.wav[44],1);
+  const view=new DataView(audio.wav.buffer);assertEquals(view.getUint32(24,true),24000);assertEquals(view.getUint16(34,true),16);
+  const tracks=videoAudioTimeline("video","audio",5,audio.durationSeconds).tracks;
+  assertEquals(tracks[0].keyframes[0].duration,5000);assertEquals(tracks[1].keyframes[0].duration,1000);
+  assertThrows(()=>pcmSpeechAudio(new Uint8Array()));assertThrows(()=>pcmSpeechAudio(new Uint8Array(3)));
+  assertThrows(()=>videoAudioTimeline("video","audio",5,6));assertThrows(()=>videoAudioTimeline("video","audio",5,NaN));
 });

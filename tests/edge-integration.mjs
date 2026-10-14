@@ -35,8 +35,8 @@ let verified=true,authenticated=true;
 globalThis.__createClient=(_url,key)=>key==="test-service"?service:{auth:{getUser:async()=>({data:{user:authenticated?{id:"test-user",email_confirmed_at:verified?"2026-01-01":null}:null},error:null})}};
 globalThis.fetch=async(url,options)=>{
   if(String(url).startsWith("https://queue.fal.run/")){
-    if(options?.method==="POST"){queueCount++;return Response.json({request_id:"queued",status_url:"https://queue.fal.run/status",response_url:"https://queue.fal.run/result"});}
-    if(String(url).endsWith("/result"))return Response.json({video:{url:"https://example.invalid/video.mp4"}});
+    if(options?.method==="POST"){calls.push({name:"fal",url:String(url),body:JSON.parse(options.body)});queueCount++;return Response.json({request_id:"queued",status_url:"https://queue.fal.run/status",response_url:"https://queue.fal.run/result"});}
+    if(String(url).endsWith("/result"))return videoJob?.merge_request_id?Response.json({video_url:"https://example.invalid/video.mp4"}):Response.json({video:{url:"https://example.invalid/video.mp4"}});
     return Response.json({status:"COMPLETED"});
   }
   assert.ok(String(url).startsWith("https://api.openai.com/v1/"),"Tests cannot reach arbitrary services");
@@ -150,9 +150,10 @@ await test("Lost settlement cannot falsely claim completion or refund",async()=>
   assert.equal((await request("video-status",{job_id:"video-job"})).status,503);assert.equal(providerCalls,0);
 });
 await test("Only one concurrent poll can start audio merging",async()=>{
-  videoJob=makeJob();responseValue=new Uint8Array([73,68,51]);
+  videoJob=makeJob();responseValue=new Uint8Array(48000);
   const responses=await Promise.all([request("video-status",{job_id:"video-job"}),request("video-status",{job_id:"video-job"})]);
   assert.equal(responses[0].status,202);assert.equal(responses[1].status,202);assert.equal(queueCount,1);assert.equal(providerCalls,1);
+  const composition=calls.find(c=>c.name==="fal");assert.equal(composition.url,"https://queue.fal.run/fal-ai/ffmpeg-api/compose");assert.equal(composition.body.tracks[0].keyframes[0].duration,5000);assert.equal(composition.body.tracks[1].keyframes[0].timestamp,0);assert.equal(composition.body.tracks[1].keyframes[0].duration,1000);assert.equal(calls.find(c=>c.name==="provider").body.response_format,"pcm");
 });
 await test("Video output and credits settle through one database transaction",async()=>{
   videoJob={...makeJob(),merge_request_id:"merge",merge_status_url:"https://queue.fal.run/status",merge_response_url:"https://queue.fal.run/result"};
@@ -180,3 +181,8 @@ await test("English explicit content is blocked on the server",async()=>{
   assert.equal(response.status,400);assert.equal(calls.length,0);
 });
 console.log(`${passed} complete Edge scenarios passed; no external provider was contacted.`);
+
+await test("Invalid PCM cannot submit composition or claim success",async()=>{
+  videoJob=makeJob();responseValue=new Uint8Array(3);
+  const response=await request("video-status",{job_id:"video-job"});assert.equal((await response.json()).status,"failed");assert.equal(queueCount,0);assert.equal(calls.find(c=>c.name==="settle_video_job").args.p_success,false);
+});
