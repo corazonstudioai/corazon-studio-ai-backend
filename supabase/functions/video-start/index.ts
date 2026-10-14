@@ -1,3 +1,5 @@
+import { readJsonRequest } from "../_shared/request.ts";
+import { hashRequest, isUnsafe } from "../_shared/ai.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders, parseVideoRequest } from "../_shared/video.ts";
 
@@ -6,6 +8,12 @@ function json(origin: string | null, body: unknown, status = 200) {
     status,
     headers: { ...corsHeaders(origin), "Content-Type": "application/json" },
   });
+}
+
+async function refundStart(service: any, reservationId: string, origin: string | null, message: string, status: number) {
+  const { error } = await service.rpc("finalize_generation", { p_reservation_id: reservationId, p_success: false });
+  if (error) return json(origin, { message: "No pudimos confirmar el estado de tus créditos." }, 503);
+  return json(origin, { message }, status);
 }
 
 Deno.serve(async (request) => {
@@ -21,7 +29,7 @@ Deno.serve(async (request) => {
   const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   const falKey = Deno.env.get("FAL_KEY");
-  if (!url || !anonKey || !serviceKey || !falKey) {
+  if (!url || !anonKey || !serviceKey || !falKey || !Deno.env.get("OPENAI_API_KEY")) {
     return json(origin, {
       message: "El servicio de video no está disponible en este momento.",
     }, 503);
@@ -50,8 +58,11 @@ Deno.serve(async (request) => {
   }
 
   let input;
+  let body;
   try {
-    input = parseVideoRequest(await request.json());
+    body = await readJsonRequest(request);
+    input = parseVideoRequest(body);
+    if (isUnsafe(input.prompt) || isUnsafe(input.narration)) throw new Error("unsafe_request");
   } catch {
     return json(origin, {
       message: "Revisa la descripción y la duración del video.",
@@ -67,7 +78,7 @@ Deno.serve(async (request) => {
   const estimatedCost = Math.max(0, perSecond * input.duration);
 
   const { data: reservations, error: reserveError } = await service.rpc(
-    "reserve_generation",
+    "reserve_generation_v2",
     {
       p_user_id: user.id,
       p_identity_kind: identityKind,
@@ -77,6 +88,7 @@ Deno.serve(async (request) => {
       p_estimated_cost_usd: estimatedCost,
       p_engine: model,
       p_idempotency_key: input.idempotencyKey,
+      p_request_hash: await hashRequest(body),
     },
   );
   const reservation = reservations?.[0];
@@ -98,12 +110,20 @@ Deno.serve(async (request) => {
     "reservation_id",
     reservation.reservation_id,
   ).maybeSingle();
+  if (previous.error) {
+    if (reservation.reason === "reserved") return refundStart(service, reservation.reservation_id, origin, "No pudimos iniciar el seguimiento. Tu crédito fue devuelto.", 503);
+    return json(origin, { code: "tracking_unavailable", message: "No pudimos consultar el seguimiento de esta solicitud." }, 503);
+  }
   if (previous.data) {
     return json(origin, {
       status: previous.data.status,
       job_id: previous.data.id,
       credits_remaining: reservation.credits_remaining,
     }, 202);
+  }
+
+  if (reservation.reason === "idempotent_replay") {
+    return json(origin, { code: "generation_in_progress", message: "Tu solicitud sigue procesándose. No necesitas crearla otra vez." }, 409);
   }
 
   let falResponse: Response;
@@ -118,33 +138,15 @@ Deno.serve(async (request) => {
       signal: AbortSignal.timeout(30_000),
     });
   } catch {
-    await service.rpc("finalize_generation", {
-      p_reservation_id: reservation.reservation_id,
-      p_success: false,
-    });
-    return json(origin, {
-      message: "El motor de video tardó demasiado. Tus créditos fueron devueltos.",
-    }, 504);
+    return refundStart(service, reservation.reservation_id, origin, "El motor de video tardó demasiado. Tus créditos fueron devueltos.", 504);
   }
   if (!falResponse.ok) {
-    await service.rpc("finalize_generation", {
-      p_reservation_id: reservation.reservation_id,
-      p_success: false,
-    });
-    return json(origin, {
-      message: "El motor de video no respondió. Tus créditos fueron devueltos.",
-    }, 502);
+    return refundStart(service, reservation.reservation_id, origin, "El motor de video no respondió. Tus créditos fueron devueltos.", 502);
   }
 
-  const queued = await falResponse.json();
+  const queued = await falResponse.json().catch(() => ({}));
   if (!queued.request_id || !queued.status_url || !queued.response_url) {
-    await service.rpc("finalize_generation", {
-      p_reservation_id: reservation.reservation_id,
-      p_success: false,
-    });
-    return json(origin, {
-      message: "No pudimos iniciar el video. Tus créditos fueron devueltos.",
-    }, 502);
+    return refundStart(service, reservation.reservation_id, origin, "No pudimos iniciar el video. Tus créditos fueron devueltos.", 502);
   }
 
   const { data: job, error: jobError } = await service.from("video_jobs")
@@ -161,13 +163,7 @@ Deno.serve(async (request) => {
     }).select("id,status").single();
 
   if (jobError || !job) {
-    await service.rpc("finalize_generation", {
-      p_reservation_id: reservation.reservation_id,
-      p_success: false,
-    });
-    return json(origin, {
-      message: "El video inició, pero no pudimos guardar su seguimiento. Tus créditos fueron devueltos.",
-    }, 500);
+    return refundStart(service, reservation.reservation_id, origin, "El video inició, pero no pudimos guardar su seguimiento. Tus créditos fueron devueltos.", 500);
   }
   return json(origin, {
     status: job.status,

@@ -1,0 +1,47 @@
+name: Brain integration and database acceptance
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: node --experimental-strip-types tests/edge-integration.mjs
+  database:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: isolated-test-password
+          POSTGRES_DB: corazon_test
+        ports: [5432:5432]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      PGHOST: localhost
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: isolated-test-password
+      PGDATABASE: corazon_test
+    steps:
+      - uses: actions/checkout@v4
+      - run: psql -X -v ON_ERROR_STOP=1 -f tests/database-fixture.sql
+      - name: Apply and reapply all migrations
+        run: |
+          for pass in 1 2; do
+            for migration in supabase/migrations/*.sql; do
+              psql -X -v ON_ERROR_STOP=1 -f "$migration"
+            done
+          done
+      - run: psql -X -v ON_ERROR_STOP=1 -f tests/database-acceptance.sql
+      - run: python tests/database-concurrency.py

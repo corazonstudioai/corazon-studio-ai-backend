@@ -1,14 +1,16 @@
+import { readJsonRequest } from "../_shared/request.ts";
+import { replayResult, saveMediaResult } from "../_shared/results.ts";
 import { corsHeaders } from "../_shared/video.ts";
+import { parseSpeechRequest } from "../_shared/content.ts";
 import {
   authenticateAndReserve,
-  bytesToBase64,
-  cleanText,
   failureResponse,
   finalize,
   isUnsafe,
   json,
   openAi,
   requestId,
+  hashRequest,
 } from "../_shared/ai.ts";
 
 Deno.serve(async (request) => {
@@ -23,35 +25,15 @@ Deno.serve(async (request) => {
   let service;
   let reservationId = "";
   try {
-    const body = await request.json();
-    const text = cleanText(body.text, 1200);
-    if (!text) {
-      return json(
-        origin,
-        { message: "Escribe el texto que deseas escuchar." },
-        400,
-      );
-    }
+    const body = await readJsonRequest(request);
+    if (!body || typeof body !== "object" || Array.isArray(body)) throw new Error("invalid_request");
+    const { text, voice, instructions } = parseSpeechRequest(body);
     if (isUnsafe(text)) {
       return json(origin, {
         message: "Esta solicitud no cumple las reglas de contenido seguro.",
       }, 400);
     }
     const model = Deno.env.get("OPENAI_TTS_MODEL") ?? "gpt-4o-mini-tts";
-    const voice = [
-        "alloy",
-        "ash",
-        "ballad",
-        "coral",
-        "echo",
-        "fable",
-        "nova",
-        "onyx",
-        "sage",
-        "shimmer",
-      ].includes(body.voice)
-      ? body.voice
-      : "nova";
     const minutes = Math.max(text.length / 900, 0.01);
     const reserved = await authenticateAndReserve(request, {
       resource: "voice_minutes",
@@ -61,7 +43,10 @@ Deno.serve(async (request) => {
         minutes,
       engine: model,
       idempotencyKey: requestId(body.idempotency_key),
+      requestHash: await hashRequest(body),
     });
+    const replay = await replayResult(reserved.service, reserved.reservation);
+    if (replay) return json(origin, { ...replay, credits_remaining: reserved.reservation.credits_remaining });
     service = reserved.service;
     reservationId = reserved.reservation.reservation_id;
 
@@ -73,19 +58,19 @@ Deno.serve(async (request) => {
         voice,
         input: text,
         response_format: "mp3",
-        instructions: cleanText(body.instructions, 500) || undefined,
+        instructions: instructions || undefined,
       }),
     });
     if (!response.ok) throw new Error("provider_error");
-    const audio = bytesToBase64(new Uint8Array(await response.arrayBuffer()));
-    await finalize(service, reservationId, true);
-    return json(origin, {
-      status: "ok",
-      audio_url: `data:audio/mpeg;base64,${audio}`,
-      credits_remaining: reserved.reservation.credits_remaining,
-    });
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (!bytes.length) throw new Error("provider_error");
+    const output = await saveMediaResult(service, reservationId, "audio_url", bytes, "audio/mpeg");
+    return json(origin, { ...output, credits_remaining: reserved.reservation.credits_remaining });
   } catch (error) {
-    if (service && reservationId) await finalize(service, reservationId, false);
+    if (service && reservationId) {
+      try { await finalize(service, reservationId, false); }
+      catch { return failureResponse(origin, new Error("billing_unavailable")); }
+    }
     return failureResponse(origin, error);
   }
 });
