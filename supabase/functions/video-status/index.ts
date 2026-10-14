@@ -5,6 +5,7 @@ import {
   extractVideoUrl,
   narrationForDuration,
   videoAudioTimeline,
+  pcmSpeechAudio,
 } from "../_shared/video.ts";
 
 const MERGE_MODEL = "fal-ai/ffmpeg-api/compose";
@@ -49,19 +50,20 @@ async function queueAudioMerge(
       model: Deno.env.get("OPENAI_TTS_MODEL") ?? "gpt-4o-mini-tts",
       voice: job.voice === "onyx" ? "onyx" : "nova",
       input: narration,
-      response_format: "mp3",
+      response_format: "pcm",
       instructions: "Habla con claridad, calidez y ritmo natural. Termina dentro de la duración del video.",
     }),
     signal: AbortSignal.timeout(30_000),
   });
   if (!speechResponse.ok) throw new Error("tts_failed");
 
-  const bytes = new Uint8Array(await speechResponse.arrayBuffer());
+  const speech = pcmSpeechAudio(new Uint8Array(await speechResponse.arrayBuffer()));
+  const bytes = speech.wav;
   let binary = "";
   for (let index = 0; index < bytes.length; index += 0x8000) {
     binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
   }
-  const audioUrl = `data:audio/mpeg;base64,${btoa(binary)}`;
+  const audioUrl = `data:audio/wav;base64,${btoa(binary)}`;
 
   const mergeResponse = await fetch(`https://queue.fal.run/${MERGE_MODEL}`, {
     method: "POST",
@@ -69,7 +71,7 @@ async function queueAudioMerge(
       "Authorization": `Key ${falKey}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(videoAudioTimeline(videoUrl, audioUrl, Number(job.duration_seconds))),
+    body: JSON.stringify(videoAudioTimeline(videoUrl, audioUrl, Number(job.duration_seconds), speech.durationSeconds)),
     signal: AbortSignal.timeout(30_000),
   });
   if (!mergeResponse.ok) throw new Error("merge_start_failed");

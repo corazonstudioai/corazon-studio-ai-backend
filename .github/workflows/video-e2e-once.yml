@@ -36,7 +36,7 @@ jobs:
           duration="$(ffprobe -v error -select_streams v:0 -show_entries stream=duration -of default=nw=1:nk=1 original/video.mp4)"
           factor="$(python -c 'import sys; print(5/float(sys.argv[1]))' "$duration")"
           ffmpeg -v error -i original/video.mp4 -an -vf "setpts=$factor*PTS,fps=16" -t 5 -c:v libx264 -pix_fmt yuv420p acceptance/reused-visual.mp4
-          ffmpeg -v error -i original/video.mp4 -vn -c:a copy acceptance/reused-voice.m4a
+          ffmpeg -v error -i original/video.mp4 -vn -ar 24000 -ac 1 -f s16le acceptance/reused-voice.pcm
       - name: Compose through the production timeline builder once
         shell: bash
         run: |
@@ -44,11 +44,12 @@ jobs:
           cat > /tmp/compose-once.mjs <<'JS'
           import fs from 'node:fs';
           import {pathToFileURL} from 'node:url';
-          const {videoAudioTimeline}=await import(pathToFileURL(process.cwd()+'/supabase/functions/_shared/video.ts'));
+          const {videoAudioTimeline,pcmSpeechAudio}=await import(pathToFileURL(process.cwd()+'/supabase/functions/_shared/video.ts'));
           const visual='data:video/mp4;base64,'+fs.readFileSync('acceptance/reused-visual.mp4').toString('base64');
-          const voice='data:audio/mp4;base64,'+fs.readFileSync('acceptance/reused-voice.m4a').toString('base64');
+          const speech=pcmSpeechAudio(new Uint8Array(fs.readFileSync('acceptance/reused-voice.pcm')));
+          const voice='data:audio/wav;base64,'+Buffer.from(speech.wav).toString('base64');
           const headers={Authorization:'Key '+process.env.FAL_KEY,'Content-Type':'application/json'};
-          const response=await fetch('https://queue.fal.run/fal-ai/ffmpeg-api/compose',{method:'POST',headers,body:JSON.stringify(videoAudioTimeline(visual,voice,5)),signal:AbortSignal.timeout(60000)});
+          const response=await fetch('https://queue.fal.run/fal-ai/ffmpeg-api/compose',{method:'POST',headers,body:JSON.stringify(videoAudioTimeline(visual,voice,5,speech.durationSeconds)),signal:AbortSignal.timeout(60000)});
           if(!response.ok)throw new Error('compose submission HTTP '+response.status);
           const queued=await response.json();
           const safe=url=>{const u=new URL(url);if(u.protocol!=='https:'||u.hostname!=='queue.fal.run')throw Error('unsafe queue URL');return u.href;};

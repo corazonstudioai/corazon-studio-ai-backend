@@ -150,10 +150,10 @@ await test("Lost settlement cannot falsely claim completion or refund",async()=>
   assert.equal((await request("video-status",{job_id:"video-job"})).status,503);assert.equal(providerCalls,0);
 });
 await test("Only one concurrent poll can start audio merging",async()=>{
-  videoJob=makeJob();responseValue=new Uint8Array([73,68,51]);
+  videoJob=makeJob();responseValue=new Uint8Array(48000);
   const responses=await Promise.all([request("video-status",{job_id:"video-job"}),request("video-status",{job_id:"video-job"})]);
   assert.equal(responses[0].status,202);assert.equal(responses[1].status,202);assert.equal(queueCount,1);assert.equal(providerCalls,1);
-  const composition=calls.find(c=>c.name==="fal");assert.equal(composition.url,"https://queue.fal.run/fal-ai/ffmpeg-api/compose");assert.equal(composition.body.tracks[0].keyframes[0].duration,5000);assert.equal(composition.body.tracks[1].keyframes[0].timestamp,0);
+  const composition=calls.find(c=>c.name==="fal");assert.equal(composition.url,"https://queue.fal.run/fal-ai/ffmpeg-api/compose");assert.equal(composition.body.tracks[0].keyframes[0].duration,5000);assert.equal(composition.body.tracks[1].keyframes[0].timestamp,0);assert.equal(composition.body.tracks[1].keyframes[0].duration,1000);assert.equal(calls.find(c=>c.name==="provider").body.response_format,"pcm");
 });
 await test("Video output and credits settle through one database transaction",async()=>{
   videoJob={...makeJob(),merge_request_id:"merge",merge_status_url:"https://queue.fal.run/status",merge_response_url:"https://queue.fal.run/result"};
@@ -181,3 +181,8 @@ await test("English explicit content is blocked on the server",async()=>{
   assert.equal(response.status,400);assert.equal(calls.length,0);
 });
 console.log(`${passed} complete Edge scenarios passed; no external provider was contacted.`);
+
+await test("Invalid PCM cannot submit composition or claim success",async()=>{
+  videoJob=makeJob();responseValue=new Uint8Array(3);
+  const response=await request("video-status",{job_id:"video-job"});assert.equal((await response.json()).status,"failed");assert.equal(queueCount,0);assert.equal(calls.find(c=>c.name==="settle_video_job").args.p_success,false);
+});
