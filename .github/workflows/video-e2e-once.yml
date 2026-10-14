@@ -1,4 +1,4 @@
-name: Repair existing real-provider sample without regeneration
+name: Verify repaired real sample without provider calls
 on:
   push:
     branches: [architecture/supabase-edge-video]
@@ -6,72 +6,18 @@ on:
 permissions:
   contents: read
   actions: read
-concurrency:
-  group: video-e2e-test
-  cancel-in-progress: false
 jobs:
-  compose-existing:
+  verify-existing:
     runs-on: ubuntu-latest
-    environment: supabase-production
-    timeout-minutes: 15
-    env:
-      FAL_KEY: ${{ secrets.FAL_KEY }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
       - uses: actions/download-artifact@v4
         with:
-          name: authorized-brain-acceptance
-          run-id: 38605430339
+          name: existing-video-composition-acceptance
+          run-id: 38607895496
           github-token: ${{ github.token }}
-          path: original
-      - name: Reuse the generated picture and spoken words
-        shell: bash
-        run: |
-          set -euo pipefail
-          if ! command -v ffprobe >/dev/null; then sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg; fi
-          mkdir -p acceptance
-          duration="$(ffprobe -v error -select_streams v:0 -show_entries stream=duration -of default=nw=1:nk=1 original/video.mp4)"
-          factor="$(python -c 'import sys; print(5/float(sys.argv[1]))' "$duration")"
-          ffmpeg -v error -i original/video.mp4 -an -vf "setpts=$factor*PTS,fps=16" -t 5 -c:v libx264 -pix_fmt yuv420p acceptance/reused-visual.mp4
-          ffmpeg -v error -i original/video.mp4 -vn -ar 24000 -ac 1 -f s16le acceptance/reused-voice.pcm
-      - name: Compose through the production timeline builder once
-        shell: bash
-        run: |
-          set -euo pipefail
-          cat > /tmp/compose-once.mjs <<'JS'
-          import fs from 'node:fs';
-          import {pathToFileURL} from 'node:url';
-          const {videoAudioTimeline,pcmSpeechAudio}=await import(pathToFileURL(process.cwd()+'/supabase/functions/_shared/video.ts'));
-          const visual='data:video/mp4;base64,'+fs.readFileSync('acceptance/reused-visual.mp4').toString('base64');
-          const speech=pcmSpeechAudio(new Uint8Array(fs.readFileSync('acceptance/reused-voice.pcm')));
-          const voice='data:audio/wav;base64,'+Buffer.from(speech.wav).toString('base64');
-          const headers={Authorization:'Key '+process.env.FAL_KEY,'Content-Type':'application/json'};
-          const response=await fetch('https://queue.fal.run/fal-ai/ffmpeg-api/compose',{method:'POST',headers,body:JSON.stringify(videoAudioTimeline(visual,voice,5,speech.durationSeconds)),signal:AbortSignal.timeout(60000)});
-          if(!response.ok)throw new Error('compose submission HTTP '+response.status);
-          const queued=await response.json();
-          const safe=url=>{const u=new URL(url);if(u.protocol!=='https:'||u.hostname!=='queue.fal.run')throw Error('unsafe queue URL');return u.href;};
-          let complete=false;
-          for(let attempt=0;attempt<65;attempt++){
-            const statusResponse=await fetch(safe(queued.status_url),{headers,signal:AbortSignal.timeout(30000)});
-            if(!statusResponse.ok)throw Error('status HTTP '+statusResponse.status);
-            const status=await statusResponse.json();
-            if(['FAILED','CANCELLED'].includes(status.status))throw Error('compose failed');
-            if(status.status==='COMPLETED'){complete=true;break;}
-            await new Promise(resolve=>setTimeout(resolve,8000));
-          }
-          if(!complete)throw Error('compose timeout');
-          const resultResponse=await fetch(safe(queued.response_url),{headers,signal:AbortSignal.timeout(30000)});
-          if(!resultResponse.ok)throw Error('result HTTP '+resultResponse.status);
-          const result=await resultResponse.json();
-          const file=await fetch(result.video_url,{signal:AbortSignal.timeout(60000)});
-          if(!file.ok)throw Error('download failed');
-          fs.writeFileSync('acceptance/video.mp4',Buffer.from(await file.arrayBuffer()));
-          console.log('One composition completed. No new video generation or speech synthesis.');
-          JS
-          node --experimental-strip-types /tmp/compose-once.mjs
+          path: acceptance
+      - name: Install decoder
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
       - name: Verify full duration, motion and unrepeated narration
         shell: bash
         run: |
@@ -85,8 +31,12 @@ jobs:
           assert len(values)>=8 and min(values)>0.5,'Motion must continue across the whole video'
           PY
           ffmpeg -hide_banner -i acceptance/video.mp4 -af volumedetect -vn -f null - 2> acceptance/audio.txt
-          ! grep -q 'max_volume: -inf' acceptance/audio.txt
-          ffmpeg -hide_banner -ss 3 -i acceptance/video.mp4 -af volumedetect -vn -f null - 2> acceptance/tail-audio.txt
+          python - <<'PY'
+          import pathlib,re
+          value=re.search(r'max_volume: (-?inf|-?[0-9.]+) dB',pathlib.Path('acceptance/audio.txt').read_text())
+          assert value and float(value.group(1))>-50,'Narration is missing or silent'
+          PY
+          ffmpeg -hide_banner -i acceptance/video.mp4 -af "apad=whole_dur=5,atrim=start=3:end=5,asetpts=PTS-STARTPTS,volumedetect" -vn -f null - 2> acceptance/tail-audio.txt
           python - <<'PY'
           import pathlib,re
           s=pathlib.Path('acceptance/tail-audio.txt').read_text()
