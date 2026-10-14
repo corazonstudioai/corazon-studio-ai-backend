@@ -28,9 +28,13 @@ export function parseVideoRequest(value: unknown) {
   const idempotencyKey = typeof body.idempotency_key === "string"
     ? body.idempotency_key
     : crypto.randomUUID();
+  const aspectRatio = body.aspect_ratio === undefined ? "16:9" : body.aspect_ratio;
+  if ((typeof aspectRatio !== "string" || !["9:16","16:9","1:1"].includes(aspectRatio))) throw new Error("invalid_aspect_ratio");
+  const audioMode = body.audio_mode === undefined ? "narrated" : body.audio_mode;
+  if ((typeof audioMode !== "string" || !["narrated","silent"].includes(audioMode))) throw new Error("invalid_audio_mode");
   const narration = typeof body.narration === "string"
     ? body.narration.trim()
-    : prompt;
+    : audioMode === "silent" ? "" : prompt;
   const voice = body.voice === "male" || body.voice === "onyx"
     ? "onyx"
     : "nova";
@@ -44,18 +48,17 @@ export function parseVideoRequest(value: unknown) {
   ) {
     throw new Error("invalid_idempotency_key");
   }
-  if (!narration || narration.length > 1200) {
+  if ((audioMode === "narrated" && !narration) || (audioMode === "silent" && !!narration) || narration.length > 1200 || (audioMode === "narrated" && narration.split(/\s+/).length > (duration <= 5 ? 12 : 25))) {
     throw new Error("invalid_narration");
   }
-  return { prompt, duration, idempotencyKey, narration, voice };
+  return { prompt, duration, idempotencyKey, narration, voice, audioMode, aspectRatio };
 }
 
 export function narrationForDuration(text: string, duration: number) {
   const maxWords = duration <= 5 ? 12 : 25;
   const words = text.trim().split(/\s+/).filter(Boolean);
-  const shortened = words.slice(0, maxWords).join(" ");
-  if (!shortened) throw new Error("invalid_narration");
-  return words.length > maxWords ? `${shortened}…` : shortened;
+  if (!words.length || words.length > maxWords) throw new Error("invalid_narration");
+  return text.trim();
 }
 
 export function extractVideoUrl(payload: unknown): string | null {
@@ -94,4 +97,9 @@ export function pcmSpeechAudio(pcm: Uint8Array) {
   view.setUint32(24,24000,true); view.setUint32(28,48000,true); view.setUint16(32,2,true); view.setUint16(34,16,true);
   text(36,"data"); view.setUint32(40,pcm.byteLength,true); wav.set(pcm,44);
   return {wav,durationSeconds:pcm.byteLength/48000};
+}
+
+export function silentVideoTimeline(videoUrl: string, durationSeconds: number) {
+  if (![5,10].includes(durationSeconds)) throw new Error("invalid_duration");
+  return {tracks:[{id:"visual",type:"video",keyframes:[{url:videoUrl,timestamp:0,duration:durationSeconds*1000}]}]};
 }

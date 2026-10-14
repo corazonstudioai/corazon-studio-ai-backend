@@ -29,7 +29,7 @@ Deno.serve(async (request) => {
   const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   const falKey = Deno.env.get("FAL_KEY");
-  if (!url || !anonKey || !serviceKey || !falKey || !Deno.env.get("OPENAI_API_KEY")) {
+  if (!url || !anonKey || !serviceKey || !falKey) {
     return json(origin, {
       message: "El servicio de video no está disponible en este momento.",
     }, 503);
@@ -69,6 +69,7 @@ Deno.serve(async (request) => {
     }, 400);
   }
 
+  if (input.audioMode === "narrated" && !Deno.env.get("OPENAI_API_KEY")) return json(origin, {message:"El servicio de voz no está disponible en este momento."}, 503);
   const service = createClient(url, serviceKey);
   const model = Deno.env.get("VIDEO_MODEL_CINE") ??
     "fal-ai/wan/v2.2-a14b/text-to-video/turbo";
@@ -134,7 +135,7 @@ Deno.serve(async (request) => {
         "Authorization": `Key ${falKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ prompt: input.prompt, duration: input.duration }),
+      body: JSON.stringify({ prompt: input.prompt, duration: input.duration, aspect_ratio: input.aspectRatio }),
       signal: AbortSignal.timeout(30_000),
     });
   } catch {
@@ -159,6 +160,7 @@ Deno.serve(async (request) => {
       response_url: queued.response_url,
       duration_seconds: input.duration,
       narration_text: input.narration,
+      audio_mode: input.audioMode,
       voice: input.voice,
     }).select("id,status").single();
 
