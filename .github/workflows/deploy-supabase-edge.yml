@@ -42,8 +42,15 @@ jobs:
             supabase/functions/video-start/index.ts \
             supabase/functions/video-status/index.ts
 
-      - name: Verify deployment credential
-        run: test -n "$SUPABASE_ACCESS_TOKEN"
+      - name: Verify required credentials before any production changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          if [[ -z "$SUPABASE_ACCESS_TOKEN" ]]; then echo "::error::Falta SUPABASE_ACCESS_TOKEN."; missing=1; fi
+          if [[ -z "$FAL_KEY" ]]; then echo "::error::Falta FAL_KEY en los secretos del entorno supabase-production."; missing=1; fi
+          if [[ -z "$OPENAI_API_KEY" ]]; then echo "::error::Falta OPENAI_API_KEY en los secretos del entorno supabase-production."; missing=1; fi
+          test "$missing" -eq 0
 
       - name: Apply database migrations
         shell: bash
@@ -68,10 +75,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          missing=0
-          if [[ -z "$FAL_KEY" ]]; then echo "::error::Falta el secreto FAL_KEY en GitHub Actions."; missing=1; fi
-          if [[ -z "$OPENAI_API_KEY" ]]; then echo "::error::Falta el secreto OPENAI_API_KEY en GitHub Actions."; missing=1; fi
-          test "$missing" -eq 0
           supabase secrets set FAL_KEY="$FAL_KEY" OPENAI_API_KEY="$OPENAI_API_KEY" --project-ref "$SUPABASE_PROJECT_REF"
 
       - name: Deploy Edge Functions
