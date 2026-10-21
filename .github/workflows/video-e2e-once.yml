@@ -1,6 +1,12 @@
 name: Brain real-provider acceptance (manual, two credits)
 on:
   workflow_dispatch:
+    inputs:
+      test_case:
+        description: 'Caso autorizado: un archivo, dos créditos de la app'
+        type: choice
+        options: [narrated, silent_vertical]
+        default: narrated
 permissions:
   contents: read
 concurrency:
@@ -12,6 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
+      TEST_CASE: ${{ inputs.test_case || 'narrated' }}
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
       SUPABASE_PROJECT_REF: wtfkhpwymdqbskrwecps
     steps:
@@ -96,13 +103,22 @@ jobs:
             cat "$response"; rm "$response"
           }
           plan_id="$(cat /proc/sys/kernel/random/uuid)"
-          plan_body="$(jq -n --arg id "$plan_id" '{purpose:"brain",message:"Crea un video de cinco segundos de un amanecer sobre montañas verdes, con nubes moviéndose y un movimiento suave de cámara. Añade una narración corta: Dios va delante de ti. Sin música ni subtítulos.",language:"es",idempotency_key:$id}')"
+          if [[ "$TEST_CASE" == silent_vertical ]]; then
+            message='Crea un video vertical 9:16 de cinco segundos de un amanecer sobre montañas verdes, con nubes moviéndose y movimiento suave de cámara. Sin texto ni narración, sin música.'
+            expected_audio=silent
+            expected_ratio=9:16
+          else
+            message='Crea un video horizontal 16:9 de cinco segundos de un amanecer sobre montañas verdes, con nubes moviéndose y movimiento suave de cámara. Añade la narración: Dios va delante de ti. Sin música ni subtítulos.'
+            expected_audio=narrated
+            expected_ratio=16:9
+          fi
+          plan_body="$(jq -n --arg id "$plan_id" --arg message "$message" --arg ratio "$expected_ratio" '{purpose:"brain",message:$message,language:"es",preferences:{mode:"video",format:$ratio},idempotency_key:$id}')"
           planned="$(call chat "$plan_body")"
-          jq -e '.plan.action=="video" and .credits_remaining==1' <<<"$planned" >/dev/null
+          jq -e --arg audio "$expected_audio" --arg ratio "$expected_ratio" '.plan.action=="video" and .plan.audio_mode==$audio and .plan.aspect_ratio==$ratio and .credits_remaining==1' <<<"$planned" >/dev/null
           replayed="$(call chat "$plan_body")"
           test "$(jq -cS '.plan' <<<"$planned")" = "$(jq -cS '.plan' <<<"$replayed")"
           create_id="$(cat /proc/sys/kernel/random/uuid)"
-          start_body="$(jq -n --argjson plan "$(jq '.plan' <<<"$planned")" --arg id "$create_id" '{prompt:$plan.prompt,narration:$plan.narration,voice:"nova",duration:5,idempotency_key:$id}')"
+          start_body="$(jq -n --argjson plan "$(jq '.plan' <<<"$planned")" --arg id "$create_id" '{prompt:$plan.prompt,narration:$plan.narration,voice:"nova",audio_mode:$plan.audio_mode,aspect_ratio:$plan.aspect_ratio,duration:5,idempotency_key:$id}')"
           started="$(call video-start "$start_body")"
           job_id="$(jq -er '.job_id' <<<"$started")"
           replay_start="$(call video-start "$start_body")"
@@ -121,10 +137,26 @@ jobs:
           jq -e '.account.free_credits_total==5 and .account.free_credits_used==5 and (.events|length)==2 and all(.events[];.status=="succeeded" and .credits_charged==1)' <<<"$verification" >/dev/null
           jq '{account,events}' <<<"$verification" > acceptance/billing.json
           video_url="$(jq -er '.video_url' <<<"$completed")"
-          curl --fail --silent --show-error --max-time 90 --location "$video_url" --output acceptance/video.mp4
+          curl --fail --silent --show-error --max-time 90 --location -H 'Origin: https://corazonstudioai.github.io' --dump-header /tmp/media-headers.txt "$video_url" --output acceptance/video.mp4
+          python - <<'PY'
+          import pathlib,json
+          blocks=pathlib.Path('/tmp/media-headers.txt').read_text().strip().split('\n\n')
+          headers={}
+          for line in blocks[-1].splitlines():
+            if ':' in line:
+              k,v=line.split(':',1);headers[k.lower().strip()]=v.strip()
+          origin=headers.get('access-control-allow-origin')
+          pathlib.Path('acceptance/cors.json').write_text(json.dumps({'allow_origin':origin}))
+          assert origin in ['*','https://corazonstudioai.github.io'],'Browser download is not allowed by media CORS'
+          PY
           if ! command -v ffprobe >/dev/null; then sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg; fi
           ffprobe -v error -show_streams -show_format -of json acceptance/video.mp4 > acceptance/media.json
-          jq -e '([.streams[]|select(.codec_type=="video")]|length)==1 and ([.streams[]|select(.codec_type=="audio")]|length)>=1 and (.format.duration|tonumber)>=4.9 and (.format.duration|tonumber)<=5.2' acceptance/media.json >/dev/null
+          jq -e --arg audio "$expected_audio" --arg ratio "$expected_ratio" '
+            ([.streams[]|select(.codec_type=="video")]|length)==1 and
+            (if $audio=="silent" then ([.streams[]|select(.codec_type=="audio")]|length)==0 else ([.streams[]|select(.codec_type=="audio")]|length)>=1 end) and
+            (.format.duration|tonumber)>=4.9 and (.format.duration|tonumber)<=5.2 and
+            ([.streams[]|select(.codec_type=="video")][0] | if $ratio=="9:16" then .width*16==.height*9 else .width*9==.height*16 end)
+          ' acceptance/media.json >/dev/null
           ffmpeg -v error -i acceptance/video.mp4 -an -f framemd5 acceptance/frames.md5
           python - <<'PY'
           import pathlib
@@ -137,14 +169,16 @@ jobs:
           values=[float(line.split('=',1)[1]) for line in pathlib.Path('acceptance/motion.txt').read_text().splitlines() if line.startswith('lavfi.signalstats.YAVG=')]
           assert len(values)>=8 and sum(value>0.5 for value in values)>=0.8*len(values),'No continuous perceptible frame motion'
           PY
+          if [[ "$expected_audio" == narrated ]]; then
           ffmpeg -hide_banner -i acceptance/video.mp4 -af volumedetect -vn -f null - 2> acceptance/audio.txt
           python - <<'PY'
           import pathlib,re
           v=re.search(r'max_volume: (-?inf|-?[0-9.]+) dB',pathlib.Path('acceptance/audio.txt').read_text())
           assert v and float(v.group(1))>-50,'Missing or silent narration'
           PY
+          fi
           jq '{plan:.plan}' <<<"$planned" > acceptance/plan.json
-          printf '%s\n' 'PASS: actual planning, cached replay, one video, moving frames, non-silent audio, complete download, exactly two credits.' > acceptance/result.txt
+          printf '%s\n' "PASS: $TEST_CASE, actual planning, cached replay, moving video, expected audio/ratio, browser-compatible download, exactly two credits." > acceptance/result.txt
           cat acceptance/result.txt
       - name: Remove technical user
         if: always()

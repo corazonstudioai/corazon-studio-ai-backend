@@ -6,6 +6,7 @@ import {
   narrationForDuration,
   videoAudioTimeline,
   pcmSpeechAudio,
+  silentVideoTimeline,
 } from "../_shared/video.ts";
 
 const MERGE_MODEL = "fal-ai/ffmpeg-api/compose";
@@ -30,48 +31,56 @@ function queueUrl(value: unknown) {
   return url.href;
 }
 
-async function queueAudioMerge(
+async function queueVideoComposition(
   job: Record<string, any>,
   videoUrl: string,
   falKey: string,
-  openAiKey: string,
+  openAiKey: string | undefined,
 ) {
-  const narration = narrationForDuration(
-    String(job.narration_text || ""),
-    Number(job.duration_seconds || 5),
-  );
-  const speechResponse = await fetch("https://api.openai.com/v1/audio/speech", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${openAiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: Deno.env.get("OPENAI_TTS_MODEL") ?? "gpt-4o-mini-tts",
-      voice: job.voice === "onyx" ? "onyx" : "nova",
-      input: narration,
-      response_format: "pcm",
-      instructions: "Habla con claridad, calidez y ritmo natural. Termina dentro de la duración del video.",
-    }),
-    signal: AbortSignal.timeout(30_000),
-  });
-  if (!speechResponse.ok) throw new Error("tts_failed");
+  const silent = job.audio_mode === "silent";
+  let timeline;
+  if (silent) {
+    timeline = silentVideoTimeline(videoUrl, Number(job.duration_seconds));
+  } else {
+    if (!openAiKey) throw new Error("tts_unavailable");
+    const narration = narrationForDuration(
+      String(job.narration_text || ""),
+      Number(job.duration_seconds || 5),
+    );
+    const speechResponse = await fetch("https://api.openai.com/v1/audio/speech", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${openAiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: Deno.env.get("OPENAI_TTS_MODEL") ?? "gpt-4o-mini-tts",
+        voice: job.voice === "onyx" ? "onyx" : "nova",
+        input: narration,
+        response_format: "pcm",
+        instructions: "Habla con claridad, calidez y ritmo natural. Termina dentro de la duración del video.",
+      }),
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!speechResponse.ok) throw new Error("tts_failed");
 
-  const speech = pcmSpeechAudio(new Uint8Array(await speechResponse.arrayBuffer()));
-  const bytes = speech.wav;
-  let binary = "";
-  for (let index = 0; index < bytes.length; index += 0x8000) {
-    binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
+    const speech = pcmSpeechAudio(new Uint8Array(await speechResponse.arrayBuffer()));
+    const bytes = speech.wav;
+    let binary = "";
+    for (let index = 0; index < bytes.length; index += 0x8000) {
+      binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
+    }
+    const audioUrl = `data:audio/wav;base64,${btoa(binary)}`;
+
+    timeline = videoAudioTimeline(videoUrl, audioUrl, Number(job.duration_seconds), speech.durationSeconds);
   }
-  const audioUrl = `data:audio/wav;base64,${btoa(binary)}`;
-
   const mergeResponse = await fetch(`https://queue.fal.run/${MERGE_MODEL}`, {
     method: "POST",
     headers: {
       "Authorization": `Key ${falKey}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(videoAudioTimeline(videoUrl, audioUrl, Number(job.duration_seconds), speech.durationSeconds)),
+    body: JSON.stringify(timeline),
     signal: AbortSignal.timeout(30_000),
   });
   if (!mergeResponse.ok) throw new Error("merge_start_failed");
@@ -98,9 +107,9 @@ Deno.serve(async (request) => {
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   const falKey = Deno.env.get("FAL_KEY");
   const openAiKey = Deno.env.get("OPENAI_API_KEY");
-  if (!url || !anonKey || !serviceKey || !falKey || !openAiKey) {
+  if (!url || !anonKey || !serviceKey || !falKey) {
     return json(origin, {
-      message: "El servicio de video con voz no está disponible en este momento.",
+      message: "El servicio de video no está disponible en este momento.",
     }, 503);
   }
 
@@ -150,7 +159,7 @@ Deno.serve(async (request) => {
     return json(origin, {
       status: "in_progress",
       message: pollingMerge
-        ? "Estamos agregando la voz al video."
+        ? (job.audio_mode === "silent" ? "Estamos preparando el video sin audio." : "Estamos agregando la voz al video.")
         : "El video sigue procesándose.",
     }, 202);
   }
@@ -167,7 +176,7 @@ Deno.serve(async (request) => {
     }).eq("id", job.id).in("status", ["queued", "in_progress"]);
     return json(origin, {
       status: "in_progress",
-      stage: pollingMerge ? "adding_audio" : "generating_video",
+      stage: pollingMerge ? (job.audio_mode === "silent" ? "composing_video" : "adding_audio") : "generating_video",
     }, 202);
   }
 
@@ -197,9 +206,9 @@ Deno.serve(async (request) => {
         .update({ merge_claimed_at: new Date().toISOString() })
         .eq("id", job.id).in("status", ["queued", "in_progress"]).is("merge_claimed_at", null).select("id");
       if (claimError) return json(origin, { message: "No pudimos consultar la etapa de audio." }, 503);
-      if (!claimed?.length) return json(origin, { status: "in_progress", stage: "adding_audio" }, 202);
+      if (!claimed?.length) return json(origin, { status: "in_progress", stage: job.audio_mode === "silent" ? "composing_video" : "adding_audio" }, 202);
       try {
-        const merge = await queueAudioMerge(job, videoUrl, falKey, openAiKey);
+        const merge = await queueVideoComposition(job, videoUrl, falKey, openAiKey);
         const { error: updateError } = await service.from("video_jobs").update({
           raw_video_url: videoUrl,
           merge_request_id: merge.request_id,
@@ -211,8 +220,8 @@ Deno.serve(async (request) => {
         if (updateError) throw new Error("audio_tracking_failed");
         return json(origin, {
           status: "in_progress",
-          stage: "adding_audio",
-          message: "El video está listo; ahora estamos agregando la voz.",
+          stage: job.audio_mode === "silent" ? "composing_video" : "adding_audio",
+          message: job.audio_mode === "silent" ? "Estamos preparando el video sin audio." : "El video está listo; ahora estamos agregando la voz.",
         }, 202);
       } catch (error) {
         return settleVideo(service, job, origin, false, null, String((error as Error).message || "audio_pipeline_failed"));

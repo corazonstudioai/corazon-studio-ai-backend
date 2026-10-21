@@ -15,7 +15,7 @@ const service={
     return{error:null};
   },
   from:table=>{
-    const query={operation:null,filters:{},select(){return this},eq(key,value){this.filters[key]=value;return this},is(){return this},in(){return this},update(value){this.operation=value;return this},insert(value){this.inserted=value;return this},
+    const query={operation:null,filters:{},select(){return this},eq(key,value){this.filters[key]=value;return this},is(){return this},in(){return this},update(value){this.operation=value;return this},insert(value){this.inserted=value;calls.push({name:"insert:"+table,value});return this},
       async maybeSingle(){
         if(table!=="video_jobs")return{data:replay?{result:replay}:null,error:null};
         if(this.filters.user_id&&this.filters.user_id!==videoJob?.user_id)return{data:null,error:null};
@@ -54,7 +54,7 @@ await test("Brain planner validates and persists its plan",async()=>{
   responseValue={choices:[{message:{content:JSON.stringify(plan)}}]};
   const response=await request("chat",{message:"Crea un video inspirador",purpose:"brain",language:"es"});
   assert.equal(response.status,200);assert.deepEqual((await response.json()).plan,plan);
-  const provider=calls.find(c=>c.name==="provider");assert.equal(provider.body.response_format.type,"json_schema"); assert.equal(provider.body.response_format.json_schema.strict,true); assert.equal(provider.body.response_format.json_schema.schema.additionalProperties,false); assert.deepEqual(provider.body.response_format.json_schema.schema.required,["action","message","prompt","narration","required_features"]);
+  const provider=calls.find(c=>c.name==="provider");assert.equal(provider.body.response_format.type,"json_schema"); assert.equal(provider.body.response_format.json_schema.strict,true); assert.equal(provider.body.response_format.json_schema.schema.additionalProperties,false); assert.deepEqual(provider.body.response_format.json_schema.schema.required,["action","message","prompt","narration","required_features","audio_mode","aspect_ratio"]);
   assert.ok(provider.body.messages[0].content.includes("Spanish"));
   assert.equal(calls.find(c=>c.name==="save_generation_result").args.p_result.plan.action,"video");
   assert.equal(calls.filter(c=>c.name==="finalize_generation").length,0,"Saving result atomically settles the event");
@@ -186,3 +186,54 @@ await test("Invalid PCM cannot submit composition or claim success",async()=>{
   videoJob=makeJob();responseValue=new Uint8Array(3);
   const response=await request("video-status",{job_id:"video-job"});assert.equal((await response.json()).status,"failed");assert.equal(queueCount,0);assert.equal(calls.find(c=>c.name==="settle_video_job").args.p_success,false);
 });
+
+const silentPlan={...plan,narration:"",required_features:["video"],audio_mode:"silent"};
+await test("Silent planner returns an executable plan without speech",async()=>{
+  responseValue={choices:[{message:{content:JSON.stringify(silentPlan)}}]};
+  const response=await request("chat",{message:"Crea un video sin texto ni narración",purpose:"brain",preferences:{mode:"video"}});
+  assert.equal(response.status,200);assert.equal((await response.json()).plan.audio_mode,"silent");
+});
+await test("Narrated output contradicting a silent request is refunded before file creation",async()=>{
+  responseValue={choices:[{message:{content:JSON.stringify(plan)}}]};
+  const response=await request("chat",{message:"Create a video without narration",purpose:"brain"});
+  assert.equal(response.status,502);assert.equal(calls.filter(c=>c.name==="finalize_generation"&&c.args.p_success===false).length,1);assert.equal(queueCount,0);
+});
+await test("An obsolete cached narrated plan cannot resume a silent request or refund completed work",async()=>{
+  receiptReason="idempotent_replay";replay={plan,reply:plan.message};
+  const response=await request("chat",{message:"Video sin voz",purpose:"brain"});
+  assert.equal(response.status,409);assert.equal((await response.json()).code,"stored_plan_requires_review");assert.equal(providerCalls,0);assert.ok(!calls.some(c=>c.name==="finalize_generation"));
+});
+await test("Selected video mode cannot execute an image plan",async()=>{
+  responseValue={choices:[{message:{content:JSON.stringify({...plan,action:"image",narration:"",required_features:["image"]})}}]};
+  assert.equal((await request("chat",{message:"Un amanecer",purpose:"brain",preferences:{mode:"video"}})).status,502);assert.equal(queueCount,0);
+});
+await test("Silent video persists its audio policy without requiring an OpenAI key",async()=>{
+  const key=configuration.OPENAI_API_KEY;delete configuration.OPENAI_API_KEY;
+  try {const response=await request("video-start",{prompt:"A moving sunrise",audio_mode:"silent",narration:"",duration:5,aspect_ratio:"9:16"});assert.equal(response.status,202);assert.equal(calls.find(c=>c.name==="insert:video_jobs").value.audio_mode,"silent");assert.equal(providerCalls,0);assert.equal(queueCount,1);assert.equal(calls.find(c=>c.name==="fal").body.aspect_ratio,"9:16");} finally{configuration.OPENAI_API_KEY=key;}
+});
+await test("Conflicting silent voice data is rejected before credits or provider calls",async()=>{
+  assert.equal((await request("video-start",{prompt:"A sunrise",audio_mode:"silent",narration:"Hola",duration:5})).status,400);assert.equal(calls.length,0);assert.equal(queueCount,0);
+});
+await test("Concurrent silent polls cannot synthesize speech or submit two compositions",async()=>{
+  videoJob={...makeJob(),audio_mode:"silent",narration_text:""};const key=configuration.OPENAI_API_KEY;delete configuration.OPENAI_API_KEY;
+  try{const responses=await Promise.all([request("video-status",{job_id:"video-job"}),request("video-status",{job_id:"video-job"})]);assert.equal(responses[0].status,202);assert.equal(responses[1].status,202);assert.equal(providerCalls,0);assert.equal(queueCount,1);const compose=calls.find(c=>c.name==="fal");assert.equal(compose.body.tracks.length,1);assert.equal(compose.body.tracks[0].type,"video");}finally{configuration.OPENAI_API_KEY=key;}
+});
+await test("Silent completed composition settles file and credits atomically",async()=>{
+  videoJob={...makeJob(),audio_mode:"silent",narration_text:"",merge_request_id:"silent-merge",merge_status_url:"https://queue.fal.run/status",merge_response_url:"https://queue.fal.run/result"};
+  const response=await request("video-status",{job_id:"video-job"});assert.equal((await response.json()).status,"completed");assert.equal(calls.filter(c=>c.name==="settle_video_job").length,1);assert.equal(providerCalls,0);
+});
+console.log(`${passed} Edge scenarios passed, including silent composition and explicit video intent.`);
+
+await test("Invalid explicit mode cannot reserve a planning credit",async()=>{
+  const response=await request("chat",{message:"A sunrise",purpose:"brain",preferences:{mode:["video"]}});assert.equal(response.status,400);assert.equal(calls.length,0);
+});
+await test("Malformed audio and ratio fields cannot reserve a video credit",async()=>{
+  for(const payload of [{audio_mode:["silent"]},{audio_mode:null},{aspect_ratio:["9:16"]},{aspect_ratio:"4:3"}])assert.equal((await request("video-start",{prompt:"A sunrise",...payload})).status,400);
+  assert.equal(calls.length,0);assert.equal(queueCount,0);
+});
+console.log(`${passed} complete Edge scenarios passed without real providers.`);
+
+await test("Overlong video narration fails before any credit or generation, never truncates",async()=>{
+  const response=await request("video-start",{prompt:"A sunrise",narration:"word ".repeat(13),duration:5});assert.equal(response.status,400);assert.equal(calls.length,0);assert.equal(queueCount,0);
+});
+console.log(`${passed} complete Edge scenarios passed without real providers.`);

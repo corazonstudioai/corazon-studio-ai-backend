@@ -2,7 +2,7 @@ import { readJsonRequest } from "../_shared/request.ts";
 import { replayResult, saveResult } from "../_shared/results.ts";
 import { corsHeaders } from "../_shared/video.ts";
 import { languageInstruction, requireReply } from "../_shared/content.ts";
-import { brainInstructions, brainResponseFormat, parseBrainReply } from "../_shared/brain.ts";
+import { brainInstructions, brainResponseFormat, parseBrainReply, validateBrainIntent } from "../_shared/brain.ts";
 import {
   authenticateAndReserve,
   cleanText,
@@ -41,6 +41,8 @@ Deno.serve(async (request) => {
     }
     const model = Deno.env.get("OPENAI_MODEL") ?? "gpt-4o-mini";
     const planning = body.purpose === "brain";
+    const selectedMode = body.preferences && typeof body.preferences === "object" ? (body.preferences as Record<string, unknown>).mode ?? "auto" : "auto";
+    if (planning && (typeof selectedMode !== "string" || !["auto","video"].includes(selectedMode))) throw new Error("invalid_request");
     const reserved = await authenticateAndReserve(request, {
       resource: "text_requests",
       units: 1,
@@ -51,7 +53,13 @@ Deno.serve(async (request) => {
       requestHash: await hashRequest(body),
     });
     const replay = await replayResult(reserved.service, reserved.reservation);
-    if (replay) return json(origin, { ...replay, credits_remaining: reserved.reservation.credits_remaining });
+    if (replay) {
+      if (planning) {
+        try { validateBrainIntent(parseBrainReply(JSON.stringify(replay.plan)), message, selectedMode); }
+        catch { return json(origin, {code:"stored_plan_requires_review",message:"La preparación guardada necesita revisarse. Inicia una nueva solicitud."}, 409); }
+      }
+      return json(origin, { ...replay, credits_remaining: reserved.reservation.credits_remaining });
+    }
     service = reserved.service;
     reservationId = reserved.reservation.reservation_id;
 
@@ -63,7 +71,7 @@ Deno.serve(async (request) => {
         messages: [
           {
             role: "system",
-            content: planning ? brainInstructions(body.language) : `Eres Corazón Studio AI. ${
+            content: planning ? brainInstructions(body.language, selectedMode) : `Eres Corazón Studio AI. ${
               languageInstruction(body.language)
             } Responde con calidez, claridad y utilidad. Ayuda a crear contenido positivo, educativo, humano y seguro. No produzcas contenido sexual, explotador, violento ni instrucciones peligrosas.`,
           },
@@ -78,6 +86,7 @@ Deno.serve(async (request) => {
     const result = await response.json();
     const reply = requireReply(result.choices?.[0]?.message?.content);
     const plan = planning ? parseBrainReply(reply) : undefined;
+    if (plan) validateBrainIntent(plan, message, selectedMode);
     const output = {
       status: "ok",
       reply: plan?.message ?? reply,
