@@ -1,5 +1,8 @@
 name: Brain real-provider acceptance (manual, two credits)
 on:
+  push:
+    branches: ["codex/acceptance-silent-20261021"]
+    paths: [".github/workflows/video-e2e-once.yml"]
   workflow_dispatch:
     inputs:
       test_case:
@@ -18,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      TEST_CASE: ${{ inputs.test_case || 'narrated' }}
+      TEST_CASE: ${{ inputs.test_case || 'silent_vertical' }}
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
       SUPABASE_PROJECT_REF: wtfkhpwymdqbskrwecps
     steps:
