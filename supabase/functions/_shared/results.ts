@@ -8,7 +8,7 @@ export async function replayResult(service: any, reservation: any) {
   return hydrateResult(service, data.result);
 }
 
-async function hydrateResult(service: any, result: Record<string, unknown>) {
+export async function hydrateResult(service: any, result: Record<string, unknown>) {
   if (!result.storage_path) return result;
   const { data, error } = await service.storage.from("creations").createSignedUrl(result.storage_path, 3600);
   if (error || !data?.signedUrl) throw new Error("result_storage_unavailable");

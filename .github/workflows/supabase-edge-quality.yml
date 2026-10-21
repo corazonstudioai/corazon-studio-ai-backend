@@ -18,6 +18,7 @@ jobs:
       - run: deno test supabase/functions/_shared/video_test.ts supabase/functions/_shared/ai_test.ts supabase/functions/_shared/content_test.ts supabase/functions/_shared/brain_test.ts
       - run: |
           deno check \
+            supabase/functions/creation/index.ts \
             supabase/functions/health/index.ts \
             supabase/functions/chat/index.ts \
             supabase/functions/image/index.ts \

@@ -35,6 +35,7 @@ jobs:
         run: |
           deno test supabase/functions/_shared/video_test.ts supabase/functions/_shared/ai_test.ts supabase/functions/_shared/content_test.ts supabase/functions/_shared/brain_test.ts
           deno check \
+            supabase/functions/creation/index.ts \
             supabase/functions/health/index.ts \
             supabase/functions/chat/index.ts \
             supabase/functions/image/index.ts \
@@ -76,6 +77,7 @@ jobs:
 
       - name: Deploy Edge Functions
         run: |
+          supabase functions deploy creation --project-ref "$SUPABASE_PROJECT_REF" --use-api
           supabase functions deploy health --project-ref "$SUPABASE_PROJECT_REF" --use-api --no-verify-jwt
           supabase functions deploy chat --project-ref "$SUPABASE_PROJECT_REF" --use-api
           supabase functions deploy image --project-ref "$SUPABASE_PROJECT_REF" --use-api
