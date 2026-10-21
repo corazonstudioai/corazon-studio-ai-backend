@@ -154,3 +154,39 @@ silencioso, dos créditos. Su workflow ya está preparado, exclusivamente manual
 con comprobaciones de cero pistas de audio, proporción 9:16, movimiento,
 ledger, CORS de descarga y limpieza. No declararlo certificado con proveedores
 reales antes de esa prueba.
+
+
+## Publicación y aceptación real del 21 de octubre de 2026
+
+Backend #14 integrado en a594653a16524dc90fa6d3ccb90f3341e3fdb1ce y desplegado:
+https://github.com/corazonstudioai/corazon-studio-ai-backend/actions/runs/39647124429
+Interfaz #13 integrada en 5344d905a831d88c3b88e7fb61d9fc572b4a4028 y publicada:
+https://github.com/corazonstudioai/corazon-studio-ai-web/actions/runs/39647279862
+La dirección pública respondió HTTP 200 con el contrato silencioso actualizado.
+
+Aceptación real aprobada (un archivo, dos créditos de la app):
+https://github.com/corazonstudioai/corazon-studio-ai-backend/actions/runs/39647318181
+Verificó planificación real y replay, video en movimiento, duración de aproximadamente
+cinco segundos, encuadre 9:16, cero pistas de audio, descarga permitida por CORS y
+ledger de dos eventos completados de un crédito cada uno. Se eliminaron el usuario
+tecnológico y el helper temporal. No se accedió a correo o teléfono personal.
+El disparador de ejecución única se cerró en la rama de aceptación; main conserva
+la prueba exclusivamente manual. No se volvió a generar para repetir verificaciones.
+
+## Bloque siguiente: volver a abrir creaciones sin generarlas
+
+Preparado, pendiente de CI final, aprobación y publicación coordinada.
+La interfaz guardaba solamente descripciones en el historial: tras refrescar no
+existía un enlace para volver a ver ni descargar el resultado. Se guardan ahora
+referencias por cuenta y se abre un endpoint creation de lectura exclusiva.
+El endpoint busca eventos/trabajos completados del usuario autenticado y renueva
+URLs firmadas de imágenes/voz; no reserva, devuelve ni liquida créditos, no inicia
+proveedores y no reintenta generación ante un archivo faltante.
+
+El historial continúa siendo local al navegador, limitado a veinte entradas.
+No recupera entradas antiguas que nunca guardaron una referencia, ni archivos
+eliminados del almacenamiento o caducados en el proveedor de video. No se promete
+sincronización entre dispositivos. Entradas sin propietario no se atribuyen a la
+cuenta actual. Las comprobaciones incluyen aislamiento entre cuentas, expiración
+segura, recarga, apertura de texto/imagen/voz/video y descarga idéntica sin nuevas
+llamadas de generación. Ningún proveedor real se utilizó para este bloque nuevo.
