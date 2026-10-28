@@ -4,6 +4,7 @@ register("./edge-loader.mjs", import.meta.url);
 const handlers = {};
 const configuration = { SUPABASE_URL:"https://test.supabase.co", SUPABASE_ANON_KEY:"test-anon", SUPABASE_SERVICE_ROLE_KEY:"test-service", OPENAI_API_KEY:"test-provider", FAL_KEY:"test-fal" };
 globalThis.Deno = {env:{get:key=>configuration[key]},serve:handler=>{globalThis.latestHandler=handler;}};
+let historyEvent=null,historyError=false,historyReads=[];
 let videoJob=null,mergeClaim=true,videoQueryError=false,settlementError=false,queueCount=0;
 let providerCalls=0, calls=[], replay=null, receiptReason="reserved", reserveAllowed=true, signedFailure=false, storageFailure=false, saveFailure=false, providerOk=true, responseValue;
 const service={
@@ -17,6 +18,8 @@ const service={
   from:table=>{
     const query={operation:null,filters:{},select(){return this},eq(key,value){this.filters[key]=value;return this},is(){return this},in(){return this},update(value){this.operation=value;return this},insert(value){this.inserted=value;calls.push({name:"insert:"+table,value});return this},
       async maybeSingle(){
+        historyReads.push({table,filters:{...this.filters}});
+        if(table==="generation_events")return{data:historyEvent?.user_id===this.filters.user_id&&historyEvent?.idempotency_key===this.filters.idempotency_key?historyEvent:null,error:historyError?{}:null};
         if(table!=="video_jobs")return{data:replay?{result:replay}:null,error:null};
         if(this.filters.user_id&&this.filters.user_id!==videoJob?.user_id)return{data:null,error:null};
         return{data:videoJob,error:videoQueryError?{}:null};
@@ -43,9 +46,9 @@ globalThis.fetch=async(url,options)=>{
   providerCalls++;calls.push({name:"provider",body:JSON.parse(options.body)});
   return responseValue instanceof Uint8Array?new Response(responseValue,{status:providerOk?200:500}):Response.json(responseValue,{status:providerOk?200:500});
 };
-for(const name of ["chat","image","tts","video-start","video-status"]){await import(`../supabase/functions/${name}/index.ts`);handlers[name]=globalThis.latestHandler;}
+for(const name of ["chat","image","tts","video-start","video-status","creation"]){await import(`../supabase/functions/${name}/index.ts`);handlers[name]=globalThis.latestHandler;}
 const id="123e4567-e89b-42d3-a456-426614174000";
-function reset(){videoJob=null;mergeClaim=true;videoQueryError=false;settlementError=false;queueCount=0;providerCalls=0;calls=[];replay=null;receiptReason="reserved";reserveAllowed=true;signedFailure=false;storageFailure=false;saveFailure=false;providerOk=true;authenticated=true;verified=true;responseValue={choices:[{message:{content:"Hola"}}]};}
+function reset(){historyEvent=null;historyError=false;historyReads=[];videoJob=null;mergeClaim=true;videoQueryError=false;settlementError=false;queueCount=0;providerCalls=0;calls=[];replay=null;receiptReason="reserved";reserveAllowed=true;signedFailure=false;storageFailure=false;saveFailure=false;providerOk=true;authenticated=true;verified=true;responseValue={choices:[{message:{content:"Hola"}}]};}
 async function request(name,payload){return handlers[name](new Request("https://test.supabase.co/functions/v1/"+name,{method:"POST",headers:{authorization:"Bearer test-session"},body:JSON.stringify({...payload,idempotency_key:id})}));}
 const plan={action:"video",message:"Un mensaje de esperanza.",prompt:"A peaceful sunrise over the sea",narration:"Dios va delante de ti. Sigue adelante con fe.",required_features:["video","voice"]};
 let passed=0;
@@ -237,3 +240,41 @@ await test("Overlong video narration fails before any credit or generation, neve
   const response=await request("video-start",{prompt:"A sunrise",narration:"word ".repeat(13),duration:5});assert.equal(response.status,400);assert.equal(calls.length,0);assert.equal(queueCount,0);
 });
 console.log(`${passed} complete Edge scenarios passed without real providers.`);
+
+await test("History is authenticated and cannot open another account's generation",async()=>{
+  authenticated=false;assert.equal((await request("creation",{type:"generation",id})).status,401);assert.equal(historyReads.length,0);
+  authenticated=true;historyEvent={id:"event",user_id:"another-user",idempotency_key:id,status:"succeeded",resource:"images"};
+  assert.equal((await request("creation",{type:"generation",id})).status,404);
+  assert.equal(historyReads.at(-1).filters.user_id,"test-user");assert.equal(providerCalls,0);assert.equal(calls.length,0);
+});
+await test("History renews a saved media link without reservations or provider calls",async()=>{
+  historyEvent={id:"event",user_id:"test-user",idempotency_key:id,status:"succeeded",resource:"voice_minutes"};
+  replay={storage_path:"event/result.mp3",media_field:"audio_url"};
+  const response=await request("creation",{type:"generation",id});assert.equal(response.status,200);assert.equal(response.headers.get("cache-control"),"no-store");
+  assert.deepEqual(await response.json(),{mode:"voice",data:{audio_url:"https://test.supabase.co/generated/result"}});
+  assert.equal(historyReads.at(-1).filters.reservation_id,"event");assert.equal(providerCalls,0);assert.equal(calls.length,0);
+  signedFailure=true;assert.equal((await request("creation",{type:"generation",id})).status,503);assert.equal(calls.length,0);
+});
+await test("History returns only finished text and never exposes planning metadata",async()=>{
+  historyEvent={id:"event",user_id:"test-user",idempotency_key:id,status:"succeeded",resource:"text_requests"};replay={reply:"Texto guardado",plan};
+  assert.deepEqual(await (await request("creation",{type:"generation",id})).json(),{mode:"text",data:{reply:"Texto guardado"}});
+  historyEvent.status="reserved";assert.equal((await request("creation",{type:"generation",id})).status,409);
+  historyEvent.status="refunded";assert.equal((await request("creation",{type:"generation",id})).status,409);
+  historyEvent.status="succeeded";replay=null;assert.equal((await request("creation",{type:"generation",id})).status,404);
+  historyError=true;assert.equal((await request("creation",{type:"generation",id})).status,503);
+  assert.equal(providerCalls,0);assert.equal(calls.length,0);
+});
+await test("History opens finished video with reads only, never polling or settlement",async()=>{
+  videoJob={id,user_id:"test-user",status:"completed",video_url:"https://example.invalid/saved.mp4"};settlementError=true;
+  assert.deepEqual(await (await request("creation",{type:"video",id})).json(),{mode:"video",data:{video_url:videoJob.video_url}});
+  videoJob.user_id="other";assert.equal((await request("creation",{type:"video",id})).status,404);
+  videoJob.user_id="test-user";videoJob.status="processing";assert.equal((await request("creation",{type:"video",id})).status,409);
+  assert.equal(queueCount,0);assert.equal(providerCalls,0);assert.equal(calls.length,0);
+});
+await test("Malformed history references and methods cannot access stored results",async()=>{
+  for(const body of [{},{type:"generation",id:"bad"},{type:["video"],id},{type:"other",id}])assert.equal((await request("creation",body)).status,400);
+  assert.equal((await handlers.creation(new Request("https://test.supabase.co/creation",{method:"GET"}))).status,405);
+  assert.equal((await handlers.creation(new Request("https://test.supabase.co/creation",{method:"OPTIONS"}))).status,200);
+  assert.equal(historyReads.length,0);assert.equal(calls.length,0);assert.equal(providerCalls,0);
+});
+console.log(`${passed} complete Edge scenarios passed, including read-only account-owned history.`);

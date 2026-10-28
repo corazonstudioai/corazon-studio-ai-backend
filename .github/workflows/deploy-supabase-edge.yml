@@ -22,8 +22,6 @@ jobs:
     env:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
       SUPABASE_PROJECT_REF: wtfkhpwymdqbskrwecps
-      FAL_KEY: ${{ secrets.FAL_KEY }}
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
     steps:
       - uses: actions/checkout@v4
 
@@ -35,6 +33,7 @@ jobs:
         run: |
           deno test supabase/functions/_shared/video_test.ts supabase/functions/_shared/ai_test.ts supabase/functions/_shared/content_test.ts supabase/functions/_shared/brain_test.ts
           deno check \
+            supabase/functions/creation/index.ts \
             supabase/functions/health/index.ts \
             supabase/functions/chat/index.ts \
             supabase/functions/image/index.ts \
@@ -64,18 +63,9 @@ jobs:
         with:
           version: latest
 
-      - name: Synchronize provider secrets
-        shell: bash
-        run: |
-          set -euo pipefail
-          missing=0
-          if [[ -z "$FAL_KEY" ]]; then echo "::error::Falta el secreto FAL_KEY en GitHub Actions."; missing=1; fi
-          if [[ -z "$OPENAI_API_KEY" ]]; then echo "::error::Falta el secreto OPENAI_API_KEY en GitHub Actions."; missing=1; fi
-          test "$missing" -eq 0
-          supabase secrets set FAL_KEY="$FAL_KEY" OPENAI_API_KEY="$OPENAI_API_KEY" --project-ref "$SUPABASE_PROJECT_REF"
-
       - name: Deploy Edge Functions
         run: |
+          supabase functions deploy creation --project-ref "$SUPABASE_PROJECT_REF" --use-api
           supabase functions deploy health --project-ref "$SUPABASE_PROJECT_REF" --use-api --no-verify-jwt
           supabase functions deploy chat --project-ref "$SUPABASE_PROJECT_REF" --use-api
           supabase functions deploy image --project-ref "$SUPABASE_PROJECT_REF" --use-api
