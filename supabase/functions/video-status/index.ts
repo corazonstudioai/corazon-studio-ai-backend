@@ -36,6 +36,7 @@ async function queueVideoComposition(
   videoUrl: string,
   falKey: string,
   openAiKey: string | undefined,
+  service: any,
 ) {
   const silent = job.audio_mode === "silent";
   let timeline;
@@ -65,12 +66,19 @@ async function queueVideoComposition(
     if (!speechResponse.ok) throw new Error("tts_failed");
 
     const speech = pcmSpeechAudio(new Uint8Array(await speechResponse.arrayBuffer()));
-    const bytes = speech.wav;
-    let binary = "";
-    for (let index = 0; index < bytes.length; index += 0x8000) {
-      binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
-    }
-    const audioUrl = `data:audio/wav;base64,${btoa(binary)}`;
+    // The FAL compositor needs a fetchable audio file, not a large data: URL.
+    // Store speech privately and sign a short-lived link for this composition.
+    if (speech.wav.byteLength > 12 * 1024 * 1024) throw new Error("speech_too_large");
+    const audioPath = `${job.reservation_id}/narration.wav`;
+    const uploaded = await service.storage.from("creations").upload(audioPath, speech.wav, {
+      contentType: "audio/wav",
+      upsert: true,
+    });
+    if (uploaded.error) throw new Error("speech_storage_failed");
+    const signed = await service.storage.from("creations").createSignedUrl(audioPath, 3600);
+    if (signed.error || !signed.data?.signedUrl) throw new Error("speech_url_failed");
+    const audioUrl = signed.data.signedUrl;
+    if (!audioUrl.startsWith("https://")) throw new Error("speech_url_invalid");
 
     timeline = videoAudioTimeline(videoUrl, audioUrl, Number(job.duration_seconds), speech.durationSeconds);
   }
@@ -208,7 +216,7 @@ Deno.serve(async (request) => {
       if (claimError) return json(origin, { message: "No pudimos consultar la etapa de audio." }, 503);
       if (!claimed?.length) return json(origin, { status: "in_progress", stage: job.audio_mode === "silent" ? "composing_video" : "adding_audio" }, 202);
       try {
-        const merge = await queueVideoComposition(job, videoUrl, falKey, openAiKey);
+        const merge = await queueVideoComposition(job, videoUrl, falKey, openAiKey, service);
         const { error: updateError } = await service.from("video_jobs").update({
           raw_video_url: videoUrl,
           merge_request_id: merge.request_id,
