@@ -156,7 +156,21 @@ await test("Only one concurrent poll can start audio merging",async()=>{
   videoJob=makeJob();responseValue=new Uint8Array(48000);
   const responses=await Promise.all([request("video-status",{job_id:"video-job"}),request("video-status",{job_id:"video-job"})]);
   assert.equal(responses[0].status,202);assert.equal(responses[1].status,202);assert.equal(queueCount,1);assert.equal(providerCalls,1);
-  const composition=calls.find(c=>c.name==="fal");assert.equal(composition.url,"https://queue.fal.run/fal-ai/ffmpeg-api/compose");assert.equal(composition.body.tracks[0].keyframes[0].duration,5000);assert.equal(composition.body.tracks[1].keyframes[0].timestamp,0);assert.equal(composition.body.tracks[1].keyframes[0].duration,1000);assert.equal(calls.find(c=>c.name==="provider").body.response_format,"pcm");
+  const composition=calls.find(c=>c.name==="fal");assert.equal(composition.url,"https://queue.fal.run/fal-ai/ffmpeg-api/compose");assert.equal(composition.body.tracks[0].keyframes[0].duration,5000);assert.equal(composition.body.tracks[1].keyframes[0].timestamp,0);assert.equal(composition.body.tracks[1].keyframes[0].duration,1000);assert.equal(calls.find(c=>c.name==="provider").body.response_format,"pcm");assert.equal(composition.body.tracks[1].keyframes[0].url,"https://test.supabase.co/generated/result");
+});
+await test("Narration storage failure never starts composition and returns credits",async()=>{
+  videoJob=makeJob();responseValue=new Uint8Array(48000);storageFailure=true;
+  const response=await request("video-status",{job_id:"video-job"});
+  assert.equal((await response.json()).status,"failed");
+  assert.equal(queueCount,0);
+  assert.equal(calls.find(c=>c.name==="settle_video_job").args.p_success,false);
+});
+await test("Narration signed URL failure prevents paid composition",async()=>{
+  videoJob=makeJob();responseValue=new Uint8Array(48000);signedFailure=true;
+  const response=await request("video-status",{job_id:"video-job"});
+  assert.equal((await response.json()).status,"failed");
+  assert.equal(queueCount,0);
+  assert.equal(calls.find(c=>c.name==="settle_video_job").args.p_success,false);
 });
 await test("Video output and credits settle through one database transaction",async()=>{
   videoJob={...makeJob(),merge_request_id:"merge",merge_status_url:"https://queue.fal.run/status",merge_response_url:"https://queue.fal.run/result"};

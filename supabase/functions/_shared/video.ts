@@ -61,16 +61,31 @@ export function narrationForDuration(text: string, duration: number) {
   return text.trim();
 }
 
+// Never settle a paid creation with a malformed, insecure, or non-media URL.
+export function safeVideoUrl(value: unknown): string | null {
+  if (typeof value !== "string" || value.length > 4096) return null;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:" || !url.hostname || url.username || url.password) return null;
+    if (url.hostname === "localhost" || url.hostname.endsWith(".localhost")) return null;
+    return url.href;
+  } catch {
+    return null;
+  }
+}
+
 export function extractVideoUrl(payload: unknown): string | null {
   if (!payload || typeof payload !== "object") return null;
   const data = payload as Record<string, unknown>;
-  if (typeof data.video_url === "string") return data.video_url;
+  const direct = safeVideoUrl(data.video_url);
+  if (direct) return direct;
   const video = data.video as Record<string, unknown> | undefined;
-  if (typeof video?.url === "string") return video.url;
+  const nested = safeVideoUrl(video?.url);
+  if (nested) return nested;
   const videos = data.videos;
   if (Array.isArray(videos)) {
     const first = videos[0] as Record<string, unknown> | undefined;
-    if (typeof first?.url === "string") return first.url;
+    return safeVideoUrl(first?.url);
   }
   return null;
 }
