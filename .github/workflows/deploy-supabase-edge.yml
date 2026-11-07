@@ -71,5 +71,5 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$SUPABASE_ACCESS_TOKEN"
-          supabase functions deploy video-status --project-ref "$SUPABASE_PROJECT_REF" --use-api
-          supabase functions deploy video-start --project-ref "$SUPABASE_PROJECT_REF" --use-api
+          supabase functions deploy video-status --project-ref "$SUPABASE_PROJECT_REF" --use-api --yes
+          supabase functions deploy video-start --project-ref "$SUPABASE_PROJECT_REF" --use-api --yes
