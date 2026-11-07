@@ -1,9 +1,9 @@
-name: Brain real-provider acceptance (manual, two credits)
+name: Video real-provider acceptance (manual)
 on:
   workflow_dispatch:
     inputs:
       test_case:
-        description: 'Caso autorizado: un archivo, dos créditos de la app'
+        description: 'Un archivo: narrado (1 crédito técnico) o vertical sin audio (2 créditos técnicos)'
         type: choice
         options: [narrated, silent_vertical]
         default: narrated
@@ -49,10 +49,14 @@ jobs:
             if(body.action==="create"){
               const email=prefix+crypto.randomUUID()+"@example.invalid";
               const password=crypto.randomUUID()+"Aa1!";
-              const created=await service.auth.admin.createUser({email,password,email_confirm:true});
+              const lockedTest=body.locked_video_test===true;
+              const created=await service.auth.admin.createUser({
+                email,password,email_confirm:true,
+                app_metadata:{locked_video_test:lockedTest},
+              });
               if(created.error||!created.data.user)return respond({error:"create_failed"},500);
               const id=created.data.user.id;
-              const account=await service.from("billing_accounts").insert({user_id:id,identity_kind:"email",free_credits_used:3});
+              const account=await service.from("billing_accounts").insert({user_id:id,identity_kind:"email",free_credits_used:lockedTest?4:3});
               if(account.error){await service.auth.admin.deleteUser(id);return respond({error:"account_failed"},500);}
               const client=createClient(url,Deno.env.get("SUPABASE_ANON_KEY")!);
               const signed=await client.auth.signInWithPassword({email,password});
@@ -84,13 +88,16 @@ jobs:
           PY
           supabase functions deploy "$helper" --project-ref "$SUPABASE_PROJECT_REF" --use-api --no-verify-jwt
           echo "HELPER_DEPLOYED=true" >> "$GITHUB_ENV"
-      - name: Plan once, generate once, verify playback bytes and two credits
+      - name: Generate once and verify media and technical credits
         shell: bash
         run: |
           set -euo pipefail
           base="https://${SUPABASE_PROJECT_REF}.supabase.co/functions/v1"
           helper_url="$base/$HELPER_NAME"
-          session="$(curl --fail-with-body --silent --show-error --max-time 40 -H "x-test-key: $HELPER_TOKEN" -H 'content-type: application/json' --data '{"action":"create"}' "$helper_url")"
+          locked_test=false
+          if [[ "$TEST_CASE" == narrated ]]; then locked_test=true; fi
+          create_user_body="$(jq -n --argjson locked "$locked_test" '{action:"create",locked_video_test:$locked}')"
+          session="$(curl --fail-with-body --silent --show-error --max-time 40 -H "x-test-key: $HELPER_TOKEN" -H 'content-type: application/json' --data "$create_user_body" "$helper_url")"
           user_id="$(jq -er '.user_id' <<<"$session")"
           access_token="$(jq -er '.access_token' <<<"$session")"
           echo "::add-mask::$access_token"
@@ -102,39 +109,48 @@ jobs:
             if [[ "$code" != 2* ]]; then echo "Endpoint $1 failed HTTP $code" >&2; jq '{code,message}' "$response" >&2; rm "$response"; return 1; fi
             cat "$response"; rm "$response"
           }
-          plan_id="$(cat /proc/sys/kernel/random/uuid)"
           if [[ "$TEST_CASE" == silent_vertical ]]; then
+            plan_id="$(cat /proc/sys/kernel/random/uuid)"
             message='Crea un video vertical 9:16 de cinco segundos de un amanecer sobre montañas verdes, con nubes moviéndose y movimiento suave de cámara. Sin texto ni narración, sin música.'
             expected_audio=silent
             expected_ratio=9:16
+            expected_credits=2
+            plan_body="$(jq -n --arg id "$plan_id" --arg message "$message" --arg ratio "$expected_ratio" '{purpose:"brain",message:$message,language:"es",preferences:{mode:"video",format:$ratio},idempotency_key:$id}')"
+            planned="$(call chat "$plan_body")"
+            jq -e '.plan.action=="video" and .plan.audio_mode=="silent" and .plan.aspect_ratio=="9:16" and .credits_remaining==1' <<<"$planned" >/dev/null
+            replayed="$(call chat "$plan_body")"
+            test "$(jq -cS '.plan' <<<"$planned")" = "$(jq -cS '.plan' <<<"$replayed")"
           else
-            message='Crea un video horizontal 16:9 de cinco segundos de un amanecer sobre montañas verdes, con nubes moviéndose y movimiento suave de cámara. Añade la narración: Dios va delante de ti. Sin música ni subtítulos.'
             expected_audio=narrated
             expected_ratio=16:9
+            expected_credits=1
+            preflight="$(call video-start '{"preflight":true}')"
+            jq -e '.locked_video_test == true' <<<"$preflight" >/dev/null
+            planned="$(jq -n '{plan:{
+              prompt:"Amanecer sobre montañas verdes, nubes en movimiento y un avance suave de cámara. Sin texto.",
+              narration:"Dios va delante de ti.", audio_mode:"narrated", aspect_ratio:"16:9"
+            }}')"
           fi
-          plan_body="$(jq -n --arg id "$plan_id" --arg message "$message" --arg ratio "$expected_ratio" '{purpose:"brain",message:$message,language:"es",preferences:{mode:"video",format:$ratio},idempotency_key:$id}')"
-          planned="$(call chat "$plan_body")"
-          jq -e --arg audio "$expected_audio" --arg ratio "$expected_ratio" '.plan.action=="video" and .plan.audio_mode==$audio and .plan.aspect_ratio==$ratio and .credits_remaining==1' <<<"$planned" >/dev/null
-          replayed="$(call chat "$plan_body")"
-          test "$(jq -cS '.plan' <<<"$planned")" = "$(jq -cS '.plan' <<<"$replayed")"
           create_id="$(cat /proc/sys/kernel/random/uuid)"
           start_body="$(jq -n --argjson plan "$(jq '.plan' <<<"$planned")" --arg id "$create_id" '{prompt:$plan.prompt,narration:$plan.narration,voice:"nova",audio_mode:$plan.audio_mode,aspect_ratio:$plan.aspect_ratio,duration:5,idempotency_key:$id}')"
           started="$(call video-start "$start_body")"
           job_id="$(jq -er '.job_id' <<<"$started")"
-          replay_start="$(call video-start "$start_body")"
-          test "$job_id" = "$(jq -er '.job_id' <<<"$replay_start")"
+          if [[ "$locked_test" == false ]]; then
+            replay_start="$(call video-start "$start_body")"
+            test "$job_id" = "$(jq -er '.job_id' <<<"$replay_start")"
+          fi
           completed=""
           for attempt in $(seq 1 65); do
             status="$(call video-status "$(jq -n --arg id "$job_id" '{job_id:$id}')")"
             state="$(jq -er '.status' <<<"$status")"
             if [[ "$state" == completed ]]; then completed="$status"; break; fi
-            if [[ "$state" == failed ]]; then echo 'Real provider pipeline failed.'; exit 1; fi
+            if [[ "$state" == failed ]]; then jq '{status,error_code,message}' <<<"$status" >&2; exit 1; fi
             sleep 8
           done
-          test -n "$completed"
+          if [[ -z "$completed" ]]; then echo 'video_test_poll_timeout' >&2; exit 1; fi
           mkdir -p acceptance
           verification="$(curl --fail --silent --show-error --max-time 40 -H "x-test-key: $HELPER_TOKEN" -H 'content-type: application/json' --data "$(jq -n --arg id "$user_id" '{action:"verify",user_id:$id}')" "$helper_url")"
-          jq -e '.account.free_credits_total==5 and .account.free_credits_used==5 and (.events|length)==2 and all(.events[];.status=="succeeded" and .credits_charged==1)' <<<"$verification" >/dev/null
+          jq -e --argjson credits "$expected_credits" '.account.free_credits_total==5 and .account.free_credits_used==5 and (.events|length)==$credits and all(.events[];.status=="succeeded" and .credits_charged==1)' <<<"$verification" >/dev/null
           jq '{account,events}' <<<"$verification" > acceptance/billing.json
           video_url="$(jq -er '.video_url' <<<"$completed")"
           curl --fail --silent --show-error --max-time 90 --location -H 'Origin: https://corazonstudioai.github.io' --dump-header /tmp/media-headers.txt "$video_url" --output acceptance/video.mp4
@@ -178,7 +194,7 @@ jobs:
           PY
           fi
           jq '{plan:.plan}' <<<"$planned" > acceptance/plan.json
-          printf '%s\n' "PASS: $TEST_CASE, actual planning, cached replay, moving video, expected audio/ratio, browser-compatible download, exactly two credits." > acceptance/result.txt
+          printf '%s\n' "PASS: $TEST_CASE, moving video, expected audio/ratio, browser-compatible download, $expected_credits technical credits." > acceptance/result.txt
           cat acceptance/result.txt
       - name: Remove technical user
         if: always()

@@ -2,6 +2,12 @@ import { readJsonRequest } from "../_shared/request.ts";
 import { hashRequest, isUnsafe } from "../_shared/ai.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders, parseVideoRequest } from "../_shared/video.ts";
+import {
+  falSingleAttemptHeaders,
+  lockedVideoModelError,
+  OPENAI_VOICE_MODEL,
+  WAN_TURBO_MODEL,
+} from "../_shared/video_test_policy.ts";
 
 function json(origin: string | null, body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -10,10 +16,10 @@ function json(origin: string | null, body: unknown, status = 200) {
   });
 }
 
-async function refundStart(service: any, reservationId: string, origin: string | null, message: string, status: number) {
+async function refundStart(service: any, reservationId: string, origin: string | null, message: string, status: number, code?: string) {
   const { error } = await service.rpc("finalize_generation", { p_reservation_id: reservationId, p_success: false });
   if (error) return json(origin, { message: "No pudimos confirmar el estado de tus créditos." }, 503);
-  return json(origin, { message }, status);
+  return json(origin, { message, code }, status);
 }
 
 Deno.serve(async (request) => {
@@ -57,10 +63,23 @@ Deno.serve(async (request) => {
     }, 403);
   }
 
+  const lockedTest = user.app_metadata?.locked_video_test === true;
+  const model = Deno.env.get("VIDEO_MODEL_CINE") ?? WAN_TURBO_MODEL;
+  const voiceModel = Deno.env.get("OPENAI_TTS_MODEL") ?? OPENAI_VOICE_MODEL;
   let input;
   let body;
   try {
     body = await readJsonRequest(request);
+    if (lockedTest) {
+      const code = lockedVideoModelError(model, voiceModel);
+      if (code) {
+        return json(origin, { code, message: "La prueba se detuvo: el motor configurado no coincide con el autorizado." }, 409);
+      }
+      if (!Deno.env.get("OPENAI_API_KEY")) {
+        return json(origin, { code: "tts_unavailable", message: "El servicio de voz no está disponible." }, 503);
+      }
+      if (body.preflight === true) return json(origin, { locked_video_test: true });
+    }
     input = parseVideoRequest(body);
     if (isUnsafe(input.prompt) || isUnsafe(input.narration)) throw new Error("unsafe_request");
   } catch {
@@ -68,11 +87,12 @@ Deno.serve(async (request) => {
       message: "Revisa la descripción y la duración del video.",
     }, 400);
   }
+  if (lockedTest && (input.duration !== 5 || input.audioMode !== "narrated")) {
+    return json(origin, { code: "invalid_locked_video_test", message: "La prueba requiere cinco segundos y narración." }, 400);
+  }
 
   if (input.audioMode === "narrated" && !Deno.env.get("OPENAI_API_KEY")) return json(origin, {message:"El servicio de voz no está disponible en este momento."}, 503);
   const service = createClient(url, serviceKey);
-  const model = Deno.env.get("VIDEO_MODEL_CINE") ??
-    "fal-ai/wan/v2.2-a14b/text-to-video/turbo";
   const perSecond = Number(
     Deno.env.get("FAL_ESTIMATED_COST_PER_SECOND") ?? "0.05",
   );
@@ -129,20 +149,24 @@ Deno.serve(async (request) => {
 
   let falResponse: Response;
   try {
-    falResponse = await fetch(`https://queue.fal.run/${model}`, {
+    const providerInput = lockedTest
+      ? { prompt: input.prompt, aspect_ratio: input.aspectRatio, resolution: "480p", enable_prompt_expansion: false }
+      : { prompt: input.prompt, duration: input.duration, aspect_ratio: input.aspectRatio };
+    falResponse = await fetch(`https://queue.fal.run/${lockedTest ? WAN_TURBO_MODEL : model}`, {
       method: "POST",
       headers: {
         "Authorization": `Key ${falKey}`,
         "Content-Type": "application/json",
+        ...(lockedTest ? falSingleAttemptHeaders : {}),
       },
-      body: JSON.stringify({ prompt: input.prompt, duration: input.duration, aspect_ratio: input.aspectRatio }),
+      body: JSON.stringify(providerInput),
       signal: AbortSignal.timeout(30_000),
     });
   } catch {
-    return refundStart(service, reservation.reservation_id, origin, "El motor de video tardó demasiado. Tus créditos fueron devueltos.", 504);
+    return refundStart(service, reservation.reservation_id, origin, "El motor de video tardó demasiado. Tus créditos fueron devueltos.", 504, lockedTest ? "fal_video_request_timeout_or_connection" : undefined);
   }
   if (!falResponse.ok) {
-    return refundStart(service, reservation.reservation_id, origin, "El motor de video no respondió. Tus créditos fueron devueltos.", 502);
+    return refundStart(service, reservation.reservation_id, origin, "El motor de video no respondió. Tus créditos fueron devueltos.", 502, lockedTest ? `fal_video_submit_http_${falResponse.status}` : undefined);
   }
 
   const queued = await falResponse.json().catch(() => ({}));

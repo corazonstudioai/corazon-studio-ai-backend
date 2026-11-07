@@ -9,7 +9,14 @@ import {
   silentVideoTimeline,
 } from "../_shared/video.ts";
 
-const MERGE_MODEL = "fal-ai/ffmpeg-api/compose";
+import {
+  falSingleAttemptHeaders,
+  lockedVideoModelError,
+  OPENAI_VOICE_MODEL,
+  recordVideoBillingEvidence,
+  VIDEO_COMPOSE_MODEL,
+  WAN_TURBO_MODEL,
+} from "../_shared/video_test_policy.ts";
 
 function json(origin: string | null, body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -19,9 +26,10 @@ function json(origin: string | null, body: unknown, status = 200) {
 }
 
 async function settleVideo(service: any, job: Record<string, any>, origin: string | null, success: boolean, videoUrl: string | null = null, code: string | null = null) {
-  const { data, error } = await service.rpc("settle_video_job", { p_job_id: job.id, p_success: success, p_video_url: videoUrl, p_error_code: code });
+  const safeCode = code && /^[a-z0-9_]{1,80}$/.test(code) ? code : null;
+  const { data, error } = await service.rpc("settle_video_job", { p_job_id: job.id, p_success: success, p_video_url: videoUrl, p_error_code: safeCode });
   if (error || !data) return json(origin, { message: "No pudimos confirmar el estado final y los créditos del video." }, 503);
-  return json(origin, { ...data, ...(data.status === "failed" ? { message: "No pudimos completar el video. Tu crédito fue devuelto." } : {}) });
+  return json(origin, { ...data, ...(data.status === "failed" ? { error_code: safeCode, message: "No pudimos completar el video. Tu crédito fue devuelto." } : {}) });
 }
 
 function queueUrl(value: unknown) {
@@ -36,6 +44,8 @@ async function queueVideoComposition(
   videoUrl: string,
   falKey: string,
   openAiKey: string | undefined,
+  lockedTest: boolean,
+  voiceModel: string,
 ) {
   const silent = job.audio_mode === "silent";
   let timeline;
@@ -54,7 +64,7 @@ async function queueVideoComposition(
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: Deno.env.get("OPENAI_TTS_MODEL") ?? "gpt-4o-mini-tts",
+        model: lockedTest ? OPENAI_VOICE_MODEL : voiceModel,
         voice: job.voice === "onyx" ? "onyx" : "nova",
         input: narration,
         response_format: "pcm",
@@ -62,7 +72,8 @@ async function queueVideoComposition(
       }),
       signal: AbortSignal.timeout(30_000),
     });
-    if (!speechResponse.ok) throw new Error("tts_failed");
+    if (lockedTest) recordVideoBillingEvidence(speechResponse, "openai", OPENAI_VOICE_MODEL, job.id);
+    if (!speechResponse.ok) throw new Error(lockedTest ? `openai_tts_http_${speechResponse.status}` : "tts_failed");
 
     const speech = pcmSpeechAudio(new Uint8Array(await speechResponse.arrayBuffer()));
     const bytes = speech.wav;
@@ -74,16 +85,20 @@ async function queueVideoComposition(
 
     timeline = videoAudioTimeline(videoUrl, audioUrl, Number(job.duration_seconds), speech.durationSeconds);
   }
-  const mergeResponse = await fetch(`https://queue.fal.run/${MERGE_MODEL}`, {
+  const mergeResponse = await fetch(`https://queue.fal.run/${VIDEO_COMPOSE_MODEL}`, {
     method: "POST",
     headers: {
       "Authorization": `Key ${falKey}`,
       "Content-Type": "application/json",
+      ...(lockedTest ? falSingleAttemptHeaders : {}),
     },
     body: JSON.stringify(timeline),
     signal: AbortSignal.timeout(30_000),
   });
-  if (!mergeResponse.ok) throw new Error("merge_start_failed");
+  if (!mergeResponse.ok) {
+    if (lockedTest) recordVideoBillingEvidence(mergeResponse, "fal", VIDEO_COMPOSE_MODEL, job.id);
+    throw new Error(lockedTest ? `fal_compose_submit_http_${mergeResponse.status}` : "merge_start_failed");
+  }
   const queued = await mergeResponse.json();
   if (!queued.request_id || !queued.status_url || !queued.response_url) {
     throw new Error("merge_start_invalid");
@@ -137,6 +152,15 @@ Deno.serve(async (request) => {
     return settleVideo(service, job, origin, true, job.video_url);
   }
   if (job.status === "failed") return settleVideo(service, job, origin, false, null, job.error_code);
+
+  const lockedTest = userData.user.app_metadata?.locked_video_test === true;
+  const voiceModel = Deno.env.get("OPENAI_TTS_MODEL") ?? OPENAI_VOICE_MODEL;
+  if (lockedTest) {
+    const configuredModel = Deno.env.get("VIDEO_MODEL_CINE") ?? WAN_TURBO_MODEL;
+    const code = lockedVideoModelError(configuredModel, voiceModel) ??
+      lockedVideoModelError(job.model, voiceModel);
+    if (code) return settleVideo(service, job, origin, false, null, code);
+  }
 
   // A provider request can expire or stop returning a useful state. Never leave
   // the user trapped in an endless "in progress" loop: close stale jobs and
@@ -192,12 +216,23 @@ Deno.serve(async (request) => {
         headers: { "Authorization": `Key ${falKey}` },
         signal: AbortSignal.timeout(15_000),
       });
+      if (lockedTest) {
+        recordVideoBillingEvidence(
+          resultResponse, "fal", pollingMerge ? VIDEO_COMPOSE_MODEL : WAN_TURBO_MODEL,
+          job.id, pollingMerge ? job.merge_request_id : job.provider_request_id,
+        );
+        if (!resultResponse.ok) {
+          const stage = pollingMerge ? "compose" : "video";
+          return settleVideo(service, job, origin, false, null, `fal_${stage}_result_http_${resultResponse.status}`);
+        }
+      }
       result = resultResponse.ok ? await resultResponse.json() : null;
     } catch {
       result = null;
     }
     const videoUrl = extractVideoUrl(result);
     if (!videoUrl) {
+      if (lockedTest) return settleVideo(service, job, origin, false, null, "fal_video_result_unavailable");
       return json(origin, { status: "in_progress", message: "Estamos preparando el archivo final." }, 202);
     }
 
@@ -208,7 +243,7 @@ Deno.serve(async (request) => {
       if (claimError) return json(origin, { message: "No pudimos consultar la etapa de audio." }, 503);
       if (!claimed?.length) return json(origin, { status: "in_progress", stage: job.audio_mode === "silent" ? "composing_video" : "adding_audio" }, 202);
       try {
-        const merge = await queueVideoComposition(job, videoUrl, falKey, openAiKey);
+        const merge = await queueVideoComposition(job, videoUrl, falKey, openAiKey, lockedTest, voiceModel);
         const { error: updateError } = await service.from("video_jobs").update({
           raw_video_url: videoUrl,
           merge_request_id: merge.request_id,

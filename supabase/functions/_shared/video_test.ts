@@ -11,6 +11,17 @@ import {
   videoAudioTimeline,
   pcmSpeechAudio,
 } from "./video.ts";
+import {
+  lockedVideoModelError,
+  OPENAI_VOICE_MODEL,
+  WAN_TURBO_MODEL,
+} from "./video_test_policy.ts";
+
+Deno.test("locked video test rejects a different configured video or voice model", () => {
+  assertEquals(lockedVideoModelError(WAN_TURBO_MODEL, OPENAI_VOICE_MODEL), null);
+  assertEquals(lockedVideoModelError("another-video-model", OPENAI_VOICE_MODEL), "video_test_model_mismatch");
+  assertEquals(lockedVideoModelError(WAN_TURBO_MODEL, "another-voice-model"), "video_test_voice_mismatch");
+});
 
 Deno.test("validates video request", () => {
   const id = "123e4567-e89b-42d3-a456-426614174000";
